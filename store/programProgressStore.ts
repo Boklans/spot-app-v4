@@ -1,0 +1,350 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { create } from 'zustand';
+import type { GeneratedProgram, GeneratedWorkout } from '@/lib/programGenerator';
+import type { UserProgram, UserWorkout } from '@/types/userProgram';
+import { useWorkoutHistoryStore } from './workoutHistoryStore';
+
+export const PROGRAM_PROGRESS_STORAGE_KEY = 'spot-program-progress';
+
+export type ProgramProgress = {
+  programId: string;
+  nextWorkoutId: string;
+  completedWorkoutCount: number;
+  lastCompletedWorkoutId?: string;
+  lastCompletedSessionId?: string;
+  lastDismissedReviewWeek?: string;
+  updatedAt: string;
+};
+
+type ParsedRawProgress = {
+  programId: string;
+  nextWorkoutId?: string;
+  nextSequenceIndex?: number;
+  completedWorkoutCount: number;
+  lastCompletedWorkoutId?: string;
+  lastCompletedSessionId?: string;
+  lastDismissedReviewWeek?: string;
+  updatedAt: string;
+};
+
+type ProgramProgressState = {
+  progress: ProgramProgress | null;
+  hydrated: boolean;
+  loadProgress: (program: UserProgram | GeneratedProgram) => Promise<ProgramProgress>;
+  advanceProgress: (
+    program: UserProgram | GeneratedProgram,
+    completedWorkoutId: string,
+    sessionId?: string,
+    completedAt?: string
+  ) => Promise<ProgramProgress>;
+  resetProgress: (programId: string, initialWorkoutId?: string) => Promise<ProgramProgress>;
+  setNextWorkout: (workoutId: string) => Promise<ProgramProgress | undefined>;
+  dismissWeeklyReview: (weekKey: string) => Promise<void>;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
+function parseProgress(value: string | null): ParsedRawProgress | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!isRecord(parsed)) return null;
+    if (
+      typeof parsed.programId !== 'string' ||
+      typeof parsed.completedWorkoutCount !== 'number' ||
+      typeof parsed.updatedAt !== 'string'
+    ) {
+      return null;
+    }
+
+    const hasNextWorkoutId = typeof parsed.nextWorkoutId === 'string';
+    const hasNextSequenceIndex = typeof parsed.nextSequenceIndex === 'number';
+    if (!hasNextWorkoutId && !hasNextSequenceIndex) {
+      return null;
+    }
+
+    return {
+      programId: parsed.programId,
+      nextWorkoutId: hasNextWorkoutId ? (parsed.nextWorkoutId as string) : undefined,
+      nextSequenceIndex: hasNextSequenceIndex ? (parsed.nextSequenceIndex as number) : undefined,
+      completedWorkoutCount: parsed.completedWorkoutCount,
+      lastCompletedWorkoutId: typeof parsed.lastCompletedWorkoutId === 'string' ? parsed.lastCompletedWorkoutId : undefined,
+      lastCompletedSessionId: typeof parsed.lastCompletedSessionId === 'string' ? parsed.lastCompletedSessionId : undefined,
+      lastDismissedReviewWeek: typeof parsed.lastDismissedReviewWeek === 'string' ? parsed.lastDismissedReviewWeek : undefined,
+      updatedAt: parsed.updatedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function getScheduledWorkout(
+  program: UserProgram,
+  progress?: (ProgramProgress | { programId?: string; nextWorkoutId?: string }) | null
+): UserWorkout;
+export function getScheduledWorkout(
+  program: GeneratedProgram,
+  progress?: (ProgramProgress | { programId?: string; nextWorkoutId?: string }) | null
+): GeneratedWorkout;
+export function getScheduledWorkout(
+  program: UserProgram | GeneratedProgram,
+  progress?: (ProgramProgress | { programId?: string; nextWorkoutId?: string }) | null
+): UserWorkout | GeneratedWorkout {
+  if (!program.workouts || program.workouts.length === 0) {
+    throw new Error('Program has no workouts');
+  }
+  if (progress && progress.programId && progress.programId !== program.id) {
+    return program.workouts[0];
+  }
+  if (!progress?.nextWorkoutId) {
+    return program.workouts[0];
+  }
+  const found = program.workouts.find((w) => w.id === progress.nextWorkoutId);
+  return found ?? program.workouts[0];
+}
+
+export const useProgramProgressStore = create<ProgramProgressState>((set, get) => ({
+  progress: null,
+  hydrated: false,
+
+  loadProgress: async (program: UserProgram | GeneratedProgram) => {
+    try {
+      const stored = await AsyncStorage.getItem(PROGRAM_PROGRESS_STORAGE_KEY);
+      const parsed = parseProgress(stored);
+
+      const fallbackWorkoutId = program.workouts[0]?.id ?? '';
+
+      if (!parsed || parsed.programId !== program.id) {
+        const initial: ProgramProgress = {
+          programId: program.id,
+          nextWorkoutId: fallbackWorkoutId,
+          completedWorkoutCount: 0,
+          updatedAt: new Date().toISOString(),
+        };
+        await AsyncStorage.setItem(PROGRAM_PROGRESS_STORAGE_KEY, JSON.stringify(initial));
+        set({ progress: initial, hydrated: true });
+        return initial;
+      }
+
+      let resolvedNextWorkoutId: string = parsed.nextWorkoutId ?? '';
+
+      // Legacy migration: if nextSequenceIndex exists but no nextWorkoutId
+      if (!resolvedNextWorkoutId && typeof parsed.nextSequenceIndex === 'number') {
+        const idx = parsed.nextSequenceIndex;
+        const safeWorkout = idx >= 0 && idx < program.workouts.length
+          ? program.workouts[idx]
+          : program.workouts[0];
+        resolvedNextWorkoutId = safeWorkout?.id ?? fallbackWorkoutId;
+      }
+
+      // Fallback: if nextWorkoutId points to a workout that no longer exists, safely fallback to workouts[0].id
+      const workoutExists = program.workouts.some((w) => w.id === resolvedNextWorkoutId);
+      if (!workoutExists) {
+        resolvedNextWorkoutId = fallbackWorkoutId;
+      }
+
+      const updated: ProgramProgress = {
+        programId: parsed.programId,
+        nextWorkoutId: resolvedNextWorkoutId,
+        completedWorkoutCount: parsed.completedWorkoutCount,
+        lastCompletedWorkoutId: parsed.lastCompletedWorkoutId,
+        lastCompletedSessionId: parsed.lastCompletedSessionId,
+        lastDismissedReviewWeek: parsed.lastDismissedReviewWeek,
+        updatedAt: parsed.updatedAt,
+      };
+
+      // If migrated from legacy nextSequenceIndex or recovered from missing workout, persist the fix
+      if (!parsed.nextWorkoutId || !workoutExists) {
+        updated.updatedAt = new Date().toISOString();
+        await AsyncStorage.setItem(PROGRAM_PROGRESS_STORAGE_KEY, JSON.stringify(updated));
+      }
+
+      set({ progress: updated, hydrated: true });
+      return updated;
+    } catch {
+      const fallback: ProgramProgress = {
+        programId: program.id,
+        nextWorkoutId: program.workouts[0]?.id ?? '',
+        completedWorkoutCount: 0,
+        updatedAt: new Date().toISOString(),
+      };
+      set({ progress: fallback, hydrated: true });
+      return fallback;
+    }
+  },
+
+  advanceProgress: async (
+    program: UserProgram | GeneratedProgram,
+    completedWorkoutId: string,
+    sessionId?: string,
+    completedAt?: string
+  ) => {
+    const current = get().progress && get().progress?.programId === program.id
+      ? (get().progress as ProgramProgress)
+      : await get().loadProgress(program);
+
+    // 1. Idempotency guard: never advance twice for the exact same session
+    if (sessionId && current.lastCompletedSessionId === sessionId) {
+      return current;
+    }
+
+    const workouts = program.workouts;
+    if (!workouts || workouts.length === 0) {
+      return current;
+    }
+
+    const completedIndex = workouts.findIndex((workout) => workout.id === completedWorkoutId);
+    const isProgramWorkout = completedIndex >= 0;
+
+    // 2. Custom or unprogrammed workouts: count as completed workout, but do NOT advance or disrupt split rotation!
+    if (!isProgramWorkout) {
+      const next: ProgramProgress = {
+        ...current,
+        completedWorkoutCount: current.completedWorkoutCount + 1,
+        lastCompletedSessionId: sessionId,
+        updatedAt: new Date().toISOString(),
+      };
+      try {
+        await AsyncStorage.setItem(PROGRAM_PROGRESS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // Continue even if local storage temporarily failed
+      }
+      set({ progress: next, hydrated: true });
+      return next;
+    }
+
+    // 3. Retroactive logging check:
+    // If user is logging an old workout that was performed BEFORE the latest completed program workout in history,
+    // do NOT rewind or reset the program rotation! Keep nextWorkoutId pointing forward.
+    try {
+      const sessionDate = completedAt
+        ? completedAt.slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+      const completedTimestamp = completedAt ? new Date(completedAt).getTime() : Date.now();
+
+      const history = await useWorkoutHistoryStore.getState().loadHistory();
+      const priorProgramWorkouts = history.filter((w) =>
+        w.id !== sessionId &&
+        workouts.some((pw) => pw.id === w.programWorkoutId)
+      );
+
+      const latestPriorWorkout = priorProgramWorkouts.sort((a, b) => {
+        const dateA = a.workoutDate || (a.completedAt || a.startedAt || '').slice(0, 10);
+        const dateB = b.workoutDate || (b.completedAt || b.startedAt || '').slice(0, 10);
+        if (dateA !== dateB) return dateB.localeCompare(dateA);
+        const timeA = new Date(a.completedAt || a.startedAt || 0).getTime();
+        const timeB = new Date(b.completedAt || b.startedAt || 0).getTime();
+        return timeB - timeA;
+      })[0];
+
+      const latestPriorDate = latestPriorWorkout
+        ? (latestPriorWorkout.workoutDate || (latestPriorWorkout.completedAt || latestPriorWorkout.startedAt || '').slice(0, 10))
+        : '';
+      const latestPriorTime = latestPriorWorkout
+        ? new Date(latestPriorWorkout.completedAt || latestPriorWorkout.startedAt || 0).getTime()
+        : 0;
+
+      const isOlderThanLatest = Boolean(
+        latestPriorWorkout &&
+        (sessionDate < latestPriorDate || (sessionDate === latestPriorDate && completedTimestamp < latestPriorTime))
+      );
+
+      if (isOlderThanLatest) {
+        // User backfilled an older session: preserve current nextWorkoutId
+        const next: ProgramProgress = {
+          ...current,
+          completedWorkoutCount: current.completedWorkoutCount + 1,
+          lastCompletedSessionId: sessionId,
+          updatedAt: new Date().toISOString(),
+        };
+        try {
+          await AsyncStorage.setItem(PROGRAM_PROGRESS_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // Continue even if local storage temporarily failed
+        }
+        set({ progress: next, hydrated: true });
+        return next;
+      }
+    } catch {
+      // If history check fails, proceed with standard progression
+    }
+
+    // 4. Standard forward progression:
+    const currentIndex = workouts.findIndex((workout) => workout.id === current.nextWorkoutId);
+    const baseIndex = completedIndex >= 0 ? completedIndex : (currentIndex >= 0 ? currentIndex : 0);
+    const nextIndex = (baseIndex + 1) % workouts.length;
+
+    const nextWorkout = workouts[nextIndex] ?? workouts[0];
+    const nextWorkoutId = nextWorkout?.id ?? workouts[0].id;
+
+    const next: ProgramProgress = {
+      programId: program.id,
+      nextWorkoutId,
+      completedWorkoutCount: current.completedWorkoutCount + 1,
+      lastCompletedWorkoutId: completedWorkoutId,
+      lastCompletedSessionId: sessionId,
+      lastDismissedReviewWeek: current.lastDismissedReviewWeek,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await AsyncStorage.setItem(PROGRAM_PROGRESS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Continue even if local storage temporarily failed
+    }
+
+    set({ progress: next, hydrated: true });
+    return next;
+  },
+
+  dismissWeeklyReview: async (weekKey: string) => {
+    const current = get().progress;
+    if (!current) return;
+    const updated: ProgramProgress = {
+      ...current,
+      lastDismissedReviewWeek: weekKey,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await AsyncStorage.setItem(PROGRAM_PROGRESS_STORAGE_KEY, JSON.stringify(updated));
+    } catch {
+      // Continue even if local storage temporarily failed
+    }
+    set({ progress: updated });
+  },
+
+  setNextWorkout: async (workoutId: string) => {
+    const current = get().progress;
+    if (!current) return;
+    const updated: ProgramProgress = {
+      ...current,
+      nextWorkoutId: workoutId,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await AsyncStorage.setItem(PROGRAM_PROGRESS_STORAGE_KEY, JSON.stringify(updated));
+    } catch {
+      // Continue
+    }
+    set({ progress: updated });
+    return updated;
+  },
+
+  resetProgress: async (programId: string, initialWorkoutId?: string) => {
+    const reset: ProgramProgress = {
+      programId,
+      nextWorkoutId: initialWorkoutId ?? '',
+      completedWorkoutCount: 0,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await AsyncStorage.setItem(PROGRAM_PROGRESS_STORAGE_KEY, JSON.stringify(reset));
+    } catch {
+      // Continue
+    }
+    set({ progress: reset, hydrated: true });
+    return reset;
+  },
+}));

@@ -1,0 +1,341 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { create } from 'zustand';
+
+export const USER_PROFILE_STORAGE_KEY = 'spot-user-profile';
+const ONBOARDING_STORAGE_KEY = 'spot-onboarding';
+
+export type BeastAvatarId =
+  | 'gorilla'
+  | 'lion'
+  | 'wolf'
+  | 'eagle'
+  | 'cheetah'
+  | 'bear'
+  | 'rhino'
+  | 'shark'
+  | 'bull'
+  | 'dragon';
+
+export const BEAST_AVATARS: Record<
+  BeastAvatarId,
+  { emoji: string; label: string; tag: string; color: string }
+> = {
+  gorilla: { emoji: '🦍', label: 'Gorilla', tag: 'Pure Power', color: '#C8FF3D' },
+  lion: { emoji: '🦁', label: 'Lion', tag: 'King of Gym', color: '#FFB800' },
+  wolf: { emoji: '🐺', label: 'Wolf', tag: 'Lone Hunter', color: '#60A5FA' },
+  eagle: { emoji: '🦅', label: 'Eagle', tag: 'Hyper Focus', color: '#38BDF8' },
+  cheetah: { emoji: '🐆', label: 'Cheetah', tag: 'Speed & Agility', color: '#F59E0B' },
+  bear: { emoji: '🐻', label: 'Bear', tag: 'Massive Force', color: '#A78BFA' },
+  rhino: { emoji: '🦏', label: 'Rhino', tag: 'Unstoppable', color: '#94A3B8' },
+  shark: { emoji: '🦈', label: 'Shark', tag: 'Apex Predator', color: '#2DD4BF' },
+  bull: { emoji: '🐂', label: 'Bull', tag: 'Relentless Drive', color: '#F43F5E' },
+  dragon: { emoji: '🐉', label: 'Dragon', tag: 'Legendary Will', color: '#EC4899' },
+};
+
+export type UserGoal = 'Build Muscle' | 'Lose Fat' | 'Get Stronger' | 'Recomposition';
+export type UserExperience = 'Beginner' | 'Intermediate' | 'Advanced';
+export type WeightUnit = 'kg' | 'lbs';
+export type HeightUnit = 'cm' | 'ft';
+export type AppLanguage = 'en' | 'uk';
+
+export type BaselineLifts = {
+  benchPressKg?: number;
+  squatKg?: number;
+  deadliftKg?: number;
+  overheadPressKg?: number;
+};
+
+export type UserProfile = {
+  name: string;
+  avatar: BeastAvatarId;
+  age?: number;
+  sex?: 'male' | 'female' | 'unspecified';
+  weightKg: number;
+  heightCm: number;
+  goal: UserGoal;
+  experience: UserExperience;
+  workoutsPerWeek: number;
+  weightUnit: WeightUnit;
+  heightUnit: HeightUnit;
+  defaultRestSeconds: number;
+  language: AppLanguage;
+  notifications: boolean;
+  notificationTime: string;
+  soundEnabled: boolean;
+  baselineLifts?: BaselineLifts;
+  trialStartedAt?: string;
+};
+
+export const DEFAULT_USER_PROFILE: UserProfile = {
+  name: 'IHOR',
+  avatar: 'gorilla',
+  age: 28,
+  sex: 'unspecified',
+  weightKg: 78,
+  heightCm: 180,
+  goal: 'Build Muscle',
+  experience: 'Intermediate',
+  workoutsPerWeek: 3,
+  weightUnit: 'kg',
+  heightUnit: 'cm',
+  defaultRestSeconds: 150,
+  language: 'en',
+  notifications: true,
+  notificationTime: '09:00',
+  soundEnabled: true,
+  baselineLifts: undefined,
+  trialStartedAt: undefined,
+};
+
+type UserProfileState = {
+  profile: UserProfile;
+  hydrated: boolean;
+  loadProfile: () => Promise<UserProfile>;
+  updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
+  resetProfile: () => Promise<void>;
+};
+
+function normalizeLoadedProfile(parsed: unknown): UserProfile {
+  if (!parsed || typeof parsed !== 'object') return DEFAULT_USER_PROFILE;
+  const p = parsed as Partial<UserProfile>;
+  const validGoals: UserGoal[] = ['Build Muscle', 'Lose Fat', 'Get Stronger', 'Recomposition'];
+  const validExp: UserExperience[] = ['Beginner', 'Intermediate', 'Advanced'];
+  const validAvatars = Object.keys(BEAST_AVATARS) as BeastAvatarId[];
+
+  const baselineLifts =
+    p.baselineLifts && typeof p.baselineLifts === 'object'
+      ? {
+          benchPressKg:
+            typeof p.baselineLifts.benchPressKg === 'number' && p.baselineLifts.benchPressKg > 0
+              ? p.baselineLifts.benchPressKg
+              : undefined,
+          squatKg:
+            typeof p.baselineLifts.squatKg === 'number' && p.baselineLifts.squatKg > 0
+              ? p.baselineLifts.squatKg
+              : undefined,
+          deadliftKg:
+            typeof p.baselineLifts.deadliftKg === 'number' && p.baselineLifts.deadliftKg > 0
+              ? p.baselineLifts.deadliftKg
+              : undefined,
+          overheadPressKg:
+            typeof p.baselineLifts.overheadPressKg === 'number' && p.baselineLifts.overheadPressKg > 0
+              ? p.baselineLifts.overheadPressKg
+              : undefined,
+        }
+      : undefined;
+
+  return {
+    name: typeof p.name === 'string' && p.name.trim().length > 0 ? p.name.trim() : DEFAULT_USER_PROFILE.name,
+    avatar: validAvatars.includes(p.avatar as BeastAvatarId) ? (p.avatar as BeastAvatarId) : DEFAULT_USER_PROFILE.avatar,
+    weightKg: typeof p.weightKg === 'number' && p.weightKg >= 20 && p.weightKg <= 300 ? Math.round(p.weightKg * 10) / 10 : DEFAULT_USER_PROFILE.weightKg,
+    heightCm: typeof p.heightCm === 'number' && p.heightCm >= 100 && p.heightCm <= 240 ? Math.round(p.heightCm) : DEFAULT_USER_PROFILE.heightCm,
+    goal: validGoals.includes(p.goal as UserGoal) ? (p.goal as UserGoal) : DEFAULT_USER_PROFILE.goal,
+    experience: validExp.includes(p.experience as UserExperience) ? (p.experience as UserExperience) : DEFAULT_USER_PROFILE.experience,
+    workoutsPerWeek:
+      typeof p.workoutsPerWeek === 'number' && p.workoutsPerWeek >= 2 && p.workoutsPerWeek <= 6
+        ? p.workoutsPerWeek
+        : DEFAULT_USER_PROFILE.workoutsPerWeek,
+    weightUnit: p.weightUnit === 'lbs' ? 'lbs' : 'kg',
+    heightUnit: p.heightUnit === 'ft' ? 'ft' : 'cm',
+    defaultRestSeconds: typeof p.defaultRestSeconds === 'number' ? p.defaultRestSeconds : 150,
+    language: p.language === 'uk' ? 'uk' : 'en',
+    notifications: typeof p.notifications === 'boolean' ? p.notifications : true,
+    notificationTime:
+      typeof p.notificationTime === 'string' && /^\d{1,2}:\d{2}$/.test(p.notificationTime)
+        ? p.notificationTime
+        : DEFAULT_USER_PROFILE.notificationTime,
+    soundEnabled: typeof p.soundEnabled === 'boolean' ? p.soundEnabled : true,
+    baselineLifts,
+    trialStartedAt: typeof p.trialStartedAt === 'string' ? p.trialStartedAt : new Date().toISOString(),
+  };
+}
+
+export function getTrialStatus(trialStartedAt?: string): { inTrial: boolean; daysLeft: number; totalDays: number } {
+  const TOTAL_TRIAL_DAYS = 14;
+  if (!trialStartedAt) {
+    return { inTrial: true, daysLeft: TOTAL_TRIAL_DAYS, totalDays: TOTAL_TRIAL_DAYS };
+  }
+  const startedTime = new Date(trialStartedAt).getTime();
+  const elapsedMs = Math.max(0, Date.now() - startedTime);
+  const elapsedDays = Math.floor(elapsedMs / (1000 * 60 * 60 * 24));
+  const daysLeft = Math.max(0, TOTAL_TRIAL_DAYS - elapsedDays);
+  return {
+    inTrial: daysLeft > 0,
+    daysLeft,
+    totalDays: TOTAL_TRIAL_DAYS,
+  };
+}
+
+export const useUserProfileStore = create<UserProfileState>((set, get) => ({
+  profile: DEFAULT_USER_PROFILE,
+  hydrated: false,
+
+  loadProfile: async () => {
+    let normalized = DEFAULT_USER_PROFILE;
+
+    try {
+      const stored = await AsyncStorage.getItem(USER_PROFILE_STORAGE_KEY);
+      if (stored) {
+        normalized = normalizeLoadedProfile(JSON.parse(stored));
+      }
+    } catch {
+      // Fall through
+    }
+
+    // Sync with onboarding data if present to ensure 100% harmony, but never overwrite userProfileStore with defaults
+    try {
+      const onboardingRaw = await AsyncStorage.getItem(ONBOARDING_STORAGE_KEY);
+      if (onboardingRaw) {
+        const ob = JSON.parse(onboardingRaw) as Record<string, unknown>;
+        const obFreq = typeof ob.trainingFrequency === 'number' ? ob.trainingFrequency : undefined;
+        if (obFreq && obFreq >= 2 && obFreq <= 6) {
+          normalized.workoutsPerWeek = obFreq;
+        }
+        if (typeof ob.name === 'string' && ob.name.trim().length > 0 && normalized.name === DEFAULT_USER_PROFILE.name) {
+          normalized.name = ob.name.trim();
+        }
+        if (typeof ob.weightKg === 'number' && ob.weightKg >= 20 && normalized.weightKg === DEFAULT_USER_PROFILE.weightKg) {
+          normalized.weightKg = Math.round(ob.weightKg * 10) / 10;
+        }
+        if (typeof ob.heightCm === 'number' && ob.heightCm > 50 && normalized.heightCm === DEFAULT_USER_PROFILE.heightCm) {
+          normalized.heightCm = Math.round(ob.heightCm);
+        }
+        if (ob.baselineLifts && typeof ob.baselineLifts === 'object' && !normalized.baselineLifts) {
+          normalized.baselineLifts = ob.baselineLifts as BaselineLifts;
+        }
+        if (typeof ob.avatar === 'string' && ob.avatar in BEAST_AVATARS && normalized.avatar === DEFAULT_USER_PROFILE.avatar) {
+          normalized.avatar = ob.avatar as BeastAvatarId;
+        }
+        const goalMap: Record<string, UserGoal> = {
+          build_muscle: 'Build Muscle',
+          'Build Muscle': 'Build Muscle',
+          get_stronger: 'Get Stronger',
+          'Get Stronger': 'Get Stronger',
+          lose_fat: 'Lose Fat',
+          'Lose Fat': 'Lose Fat',
+          recomposition: 'Recomposition',
+          Recomposition: 'Recomposition',
+        };
+        if (typeof ob.goal === 'string' && goalMap[ob.goal] && normalized.goal === DEFAULT_USER_PROFILE.goal) {
+          normalized.goal = goalMap[ob.goal];
+        }
+        const expMap: Record<string, UserExperience> = {
+          beginner: 'Beginner',
+          Beginner: 'Beginner',
+          intermediate: 'Intermediate',
+          Intermediate: 'Intermediate',
+          advanced: 'Advanced',
+          Advanced: 'Advanced',
+        };
+        if (typeof ob.experience === 'string' && expMap[ob.experience] && normalized.experience === DEFAULT_USER_PROFILE.experience) {
+          normalized.experience = expMap[ob.experience];
+        }
+      }
+    } catch {
+      // Continue
+    }
+
+    set({ profile: normalized, hydrated: true });
+    return normalized;
+  },
+
+  updateProfile: async (updates: Partial<UserProfile>) => {
+    const current = get().profile;
+    const updated: UserProfile = {
+      ...current,
+      ...updates,
+    };
+
+    set({ profile: updated, hydrated: true });
+
+    try {
+      await AsyncStorage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(updated));
+    } catch {
+      // Continue
+    }
+
+    // Synchronize updates back to onboarding storage as well
+    try {
+      const onboardingRaw = await AsyncStorage.getItem(ONBOARDING_STORAGE_KEY);
+      const existing = onboardingRaw ? (JSON.parse(onboardingRaw) as Record<string, unknown>) : {};
+      const nextOnboarding = {
+        ...existing,
+        name: updated.name,
+        trainingFrequency: updated.workoutsPerWeek,
+        weightKg: updated.weightKg,
+        heightCm: updated.heightCm,
+        avatar: updated.avatar,
+        baselineLifts: updated.baselineLifts,
+      };
+      await AsyncStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(nextOnboarding));
+    } catch {
+      // Continue
+    }
+
+    if (updates.weightKg !== undefined && updates.weightKg > 0) {
+      import('./bodyWeightStore')
+        .then(({ useBodyWeightStore }) => useBodyWeightStore.getState().syncBaselineWeight(updates.weightKg!))
+        .catch(() => undefined);
+    }
+
+    if (updates.defaultRestSeconds !== undefined) {
+      import('./workoutSessionStore')
+        .then(({ useWorkoutSessionStore }) => {
+          const store = useWorkoutSessionStore.getState();
+          if (store.session) {
+            const nextSec = updates.defaultRestSeconds!;
+            const updatedExercises = store.session.exercises.map((ex) =>
+              ex.isCustomRest ? ex : { ...ex, restSeconds: nextSec }
+            );
+            useWorkoutSessionStore.setState({
+              session: { ...store.session, exercises: updatedExercises },
+            });
+          }
+        })
+        .catch(() => undefined);
+
+      import('./programStore')
+        .then(({ useProgramStore }) => {
+          const progStore = useProgramStore.getState();
+          if (progStore.program) {
+            const nextSec = updates.defaultRestSeconds!;
+            const updatedWorkouts = progStore.program.workouts.map((w) => ({
+              ...w,
+              defaultRestSeconds: nextSec,
+              exercises: w.exercises.map((ex) =>
+                (ex as any).isCustomRest ? ex : { ...ex, restSeconds: nextSec }
+              ),
+            }));
+            useProgramStore.setState({
+              program: { ...progStore.program, defaultRestSeconds: nextSec, workouts: updatedWorkouts },
+            });
+          }
+        })
+        .catch(() => undefined);
+    }
+
+    if (
+      updates.notifications !== undefined ||
+      updates.notificationTime !== undefined ||
+      updates.language !== undefined ||
+      updates.workoutsPerWeek !== undefined
+    ) {
+      import('@/lib/notificationService')
+        .then(({ scheduleWorkoutDayReminders }) => scheduleWorkoutDayReminders())
+        .catch(() => undefined);
+    }
+  },
+
+  resetProfile: async () => {
+    set({ profile: DEFAULT_USER_PROFILE });
+    try {
+      await AsyncStorage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(DEFAULT_USER_PROFILE));
+    } catch {
+      // Continue
+    }
+
+    import('@/lib/notificationService')
+      .then(({ cancelAllWorkoutReminders }) => cancelAllWorkoutReminders())
+      .catch(() => undefined);
+  },
+}));

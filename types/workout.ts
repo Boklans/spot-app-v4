@@ -1,0 +1,41 @@
+export type PersonalRecordType = 'weight' | 'estimated_1rm';
+
+export type PersonalRecord = {
+  id: string;
+  type: PersonalRecordType;
+  exerciseId: string;
+  exerciseName: string;
+  value: number;
+  label: string;
+};
+
+export type CompletedSet = {
+  weight: number;
+  reps: number;
+  volume: number;
+  completedAt: string;
+  rir?: number;
+};
+
+export type CompletedExercise = {
+  exerciseId: string;
+  exerciseName: string;
+  muscleGroup: string;
+  sets: CompletedSet[];
+};
+
+export type CompletedWorkout = {
+  id: string;
+  programWorkoutId: string;
+  workoutName: string;
+  workoutDate?: string; // YYYY-MM-DD calendar day
+  startedAt: string;
+  completedAt: string;
+  durationSeconds: number;
+  totalSets: number;
+  plannedSets?: number;
+  isPartial?: boolean;
+  totalVolume: number;
+  exercises: CompletedExercise[];
+  personalRecords: PersonalRecord[];
+};

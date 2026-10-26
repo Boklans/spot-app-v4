@@ -1,0 +1,74 @@
+{
+  "expo": {
+    "name": "SPOT",
+    "slug": "spot-app",
+    "version": "1.0.2",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "spot",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B0D0F",
+    "primaryColor": "#C8FF3D",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B0D0F"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0B0D0F",
+          "dark": {
+            "image": "./assets/splash.png",
+            "backgroundColor": "#0B0D0F"
+          }
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#C8FF3D"
+        }
+      ],
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.vanzalabs.spot",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.vanzalabs.spot",
+      "versionCode": 3,
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B0D0F"
+      }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "396d894f-4173-4935-9545-a61c55acf590"
+      }
+    },
+    "owner": "boklans"
+  }
+}

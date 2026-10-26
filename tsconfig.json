@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "module": "ESNext",
+    "types": ["vite/client", "node"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "allowJs": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "@expo/vector-icons/Ionicons": ["./src/shims/vector-icons.tsx"],
+      "@expo/vector-icons/MaterialCommunityIcons": ["./src/shims/vector-icons.tsx"],
+      "@expo/vector-icons": ["./src/shims/vector-icons.tsx"],
+      "@react-native-async-storage/async-storage": ["./src/shims/async-storage.ts"],
+      "react-native-safe-area-context": ["./src/shims/safe-area-context.tsx"],
+      "react-native-purchases": ["./src/shims/react-native-purchases.ts"],
+      "react-native-svg": ["./src/shims/react-native-svg.tsx"],
+      "react-native": ["./src/shims/react-native.tsx"],
+      "expo-router": ["./src/shims/expo-router.tsx"],
+      "expo-linear-gradient": ["./src/shims/expo-linear-gradient.tsx"],
+      "expo-image-picker": ["./src/shims/expo-image-picker.ts"],
+      "expo-haptics": ["./src/shims/expo-haptics.ts"],
+      "expo-notifications": ["./src/shims/expo-notifications.ts"],
+      "expo-font": ["./src/shims/expo-font.ts"],
+      "@/*": ["./*"]
+    },
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "exclude": ["dist", "scripts"]
+}

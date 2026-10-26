@@ -1,0 +1,6 @@
+{
+  "name": "SPOT — Smart Strength & Workout Tracker",
+  "description": "Smart strength training, adaptive workout programming, muscle recovery tracking, and progress analytics app.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

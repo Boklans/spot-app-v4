@@ -1,0 +1,1381 @@
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { Screen } from '@/components/ui/Screen';
+import { ExercisePickerModal } from '@/components/program/ExercisePickerModal';
+import { colors } from '@/constants/colors';
+import { spacing } from '@/constants/spacing';
+import type { LibraryExercise } from '@/lib/exerciseLibrary';
+import { hapticLight, hapticMedium, hapticSuccess } from '@/lib/haptics';
+import { generateUUID } from '@/lib/programMigration';
+import { ALL_WEEKDAYS, getNextAvailableWeekday, getWorkoutDayLabel } from '@/lib/programGenerator';
+import { useI18n } from '@/lib/i18n';
+import { useProgramStore } from '@/store/programStore';
+import { defaultOnboarding, loadOnboarding, saveOnboarding } from '@/store/workoutStore';
+import type { UserExercise, UserProgram, UserWorkout } from '@/types/userProgram';
+
+export default function ProgramEdit() {
+  const { t, tm, td, language } = useI18n();
+  const activeProgram = useProgramStore((state) => state.program);
+  const setCustomProgram = useProgramStore((state) => state.setCustomProgram);
+  const saveRoutine = useProgramStore((state) => state.saveRoutine);
+
+  // Track if user made modifications in this editing session
+  const isDirtyRef = useRef(false);
+
+  // Local draft state holding deep clone of the active program
+  const [draft, setDraft] = useState<UserProgram>(() =>
+    JSON.parse(JSON.stringify(activeProgram))
+  );
+
+  // Sub-view navigation state: null = Program Editor; string = Workout Editor
+  const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null);
+
+  // Exercise Picker Modal state
+  const [isExercisePickerVisible, setIsExercisePickerVisible] = useState(false);
+
+  // Local raw text input buffers for decimal numbers to prevent decimal-point stripping during typing
+  const [rawWeightInputs, setRawWeightInputs] = useState<Record<string, string>>({});
+  const [rawIncrementInputs, setRawIncrementInputs] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let isMounted = true;
+    useProgramStore.getState().getOrLoadProgram().then((loaded) => {
+      if (isMounted && loaded && !isDirtyRef.current) {
+        setDraft(JSON.parse(JSON.stringify(loaded)));
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Program Level Handlers
+  const handleProgramNameChange = (name: string) => {
+    isDirtyRef.current = true;
+    setDraft((prev) => ({
+      ...prev,
+      name,
+    }));
+  };
+
+  const handleMoveWorkoutUp = (index: number) => {
+    if (index <= 0) return;
+    hapticMedium();
+    isDirtyRef.current = true;
+    setDraft((prev) => {
+      const workouts = [...prev.workouts];
+      const temp = workouts[index - 1];
+      workouts[index - 1] = workouts[index];
+      workouts[index] = temp;
+      return { ...prev, workouts };
+    });
+  };
+
+  const handleMoveWorkoutDown = (index: number) => {
+    if (index >= draft.workouts.length - 1) return;
+    hapticMedium();
+    isDirtyRef.current = true;
+    setDraft((prev) => {
+      if (index >= prev.workouts.length - 1) return prev;
+      const workouts = [...prev.workouts];
+      const temp = workouts[index + 1];
+      workouts[index + 1] = workouts[index];
+      workouts[index] = temp;
+      return { ...prev, workouts };
+    });
+  };
+
+  const handleDeleteWorkout = (workoutId: string) => {
+    if (draft.workouts.length <= 1) {
+      Alert.alert(
+        language === 'uk' ? 'Неможливо видалити' : 'Cannot delete',
+        language === 'uk'
+          ? 'У вашій програмі має бути хоча б одне тренування.'
+          : 'Your program must have at least one workout.'
+      );
+      return;
+    }
+
+    Alert.alert(
+      language === 'uk' ? 'Видалити тренування?' : 'Delete workout day?',
+      language === 'uk'
+        ? 'Цей день тренування та всі його вправи будуть видалені з програми.'
+        : 'This workout day and all its exercises will be removed from your program.',
+      [
+        { text: language === 'uk' ? 'Скасувати' : 'Cancel', style: 'cancel' },
+        {
+          text: language === 'uk' ? 'Видалити' : 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            hapticMedium();
+            isDirtyRef.current = true;
+            setDraft((prev) => {
+              const filtered = prev.workouts.filter((w) => w.id !== workoutId);
+              return {
+                ...prev,
+                workouts: filtered,
+                daysPerWeek: Math.min(prev.daysPerWeek, filtered.length),
+              };
+            });
+
+            if (selectedWorkoutId === workoutId) {
+              setSelectedWorkoutId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleAddNewWorkout = () => {
+    hapticMedium();
+    isDirtyRef.current = true;
+    const count = draft.workouts.length;
+    const letter = String.fromCharCode(65 + count);
+    const nextWeekday = getNextAvailableWeekday(draft.workouts);
+    const newWorkout: UserWorkout = {
+      id: generateUUID(),
+      name: language === 'uk' ? `Тренування ${letter}` : `Workout ${letter}`,
+      dayLabel: nextWeekday,
+      muscleGroups: [],
+      estimatedMinutes: 45,
+      defaultRestSeconds: 90,
+      exercises: [],
+    };
+
+    setDraft((prev) => ({
+      ...prev,
+      daysPerWeek: Math.min(7, prev.workouts.length + 1),
+      workouts: [...prev.workouts, newWorkout],
+    }));
+
+    setSelectedWorkoutId(newWorkout.id);
+  };
+
+  // Workout Level Handlers
+  const handleWorkoutNameChange = (workoutId: string, name: string) => {
+    isDirtyRef.current = true;
+    setDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((w) => (w.id === workoutId ? { ...w, name } : w)),
+    }));
+  };
+
+  const handleWorkoutDayLabelChange = (workoutId: string, dayLabel: string) => {
+    isDirtyRef.current = true;
+    setDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((w) => (w.id === workoutId ? { ...w, dayLabel } : w)),
+    }));
+  };
+
+  // Exercise Level Handlers
+  const handleMoveExerciseUp = (workoutId: string, exerciseIndex: number) => {
+    if (exerciseIndex <= 0) return;
+    hapticMedium();
+    isDirtyRef.current = true;
+    setDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((w) => {
+        if (w.id !== workoutId) return w;
+        const exercises = [...w.exercises];
+        const temp = exercises[exerciseIndex - 1];
+        exercises[exerciseIndex - 1] = exercises[exerciseIndex];
+        exercises[exerciseIndex] = temp;
+        return { ...w, exercises };
+      }),
+    }));
+  };
+
+  const handleMoveExerciseDown = (workoutId: string, exerciseIndex: number) => {
+    const currentWorkout = draft.workouts.find((w) => w.id === workoutId);
+    if (!currentWorkout || exerciseIndex >= currentWorkout.exercises.length - 1) return;
+    hapticMedium();
+    isDirtyRef.current = true;
+    setDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((w) => {
+        if (w.id !== workoutId) return w;
+        if (exerciseIndex >= w.exercises.length - 1) return w;
+        const exercises = [...w.exercises];
+        const temp = exercises[exerciseIndex + 1];
+        exercises[exerciseIndex + 1] = exercises[exerciseIndex];
+        exercises[exerciseIndex] = temp;
+        return { ...w, exercises };
+      }),
+    }));
+  };
+
+  const handleDeleteExercise = (workoutId: string, exerciseId: string) => {
+    const currentWorkout = draft.workouts.find((w) => w.id === workoutId);
+    if (currentWorkout && currentWorkout.exercises.length <= 1) {
+      Alert.alert('Cannot delete', 'Each workout must have at least one exercise.');
+      return;
+    }
+
+    isDirtyRef.current = true;
+    setDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((w) => {
+        if (w.id !== workoutId) return w;
+        const remainingExercises = w.exercises.filter((ex) => ex.id !== exerciseId);
+        const updatedMuscles = [...new Set(remainingExercises.map((e) => e.muscleGroup))];
+        return {
+          ...w,
+          muscleGroups: updatedMuscles,
+          exercises: remainingExercises,
+        };
+      }),
+    }));
+  };
+
+  const handleAddExercise = (workoutId: string, libExercise: LibraryExercise) => {
+    isDirtyRef.current = true;
+    const newExercise: UserExercise = {
+      id: generateUUID(),
+      name: libExercise.name,
+      muscleGroup: libExercise.muscleGroup,
+      sets: libExercise.defaultSets ?? 3,
+      recommendedWeight: libExercise.defaultWeight ?? 0,
+      targetRepRange: libExercise.defaultRepRange ?? '8-10',
+      equipment: libExercise.equipment,
+      weightIncrement: libExercise.weightIncrement ?? 2.5,
+      restSeconds: 90,
+    };
+
+    setDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((w) => {
+        if (w.id !== workoutId) return w;
+        const updatedMuscles = w.muscleGroups.includes(libExercise.muscleGroup)
+          ? w.muscleGroups
+          : [...w.muscleGroups, libExercise.muscleGroup];
+        return {
+          ...w,
+          muscleGroups: updatedMuscles,
+          exercises: [...w.exercises, newExercise],
+        };
+      }),
+    }));
+    hapticSuccess();
+  };
+
+  const handleUpdateExercise = (
+    workoutId: string,
+    exerciseId: string,
+    updates: Partial<UserExercise>
+  ) => {
+    isDirtyRef.current = true;
+    setDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((w) => {
+        if (w.id !== workoutId) return w;
+        return {
+          ...w,
+          exercises: w.exercises.map((ex) => (ex.id === exerciseId ? { ...ex, ...updates } : ex)),
+        };
+      }),
+    }));
+  };
+
+  const handleSetsDelta = (workoutId: string, exercise: UserExercise, delta: number) => {
+    hapticLight();
+    isDirtyRef.current = true;
+    const nextSets = Math.max(1, exercise.sets + delta);
+    handleUpdateExercise(workoutId, exercise.id, { sets: nextSets });
+  };
+
+  const handleWeightDelta = (workoutId: string, exercise: UserExercise, delta: number) => {
+    hapticLight();
+    isDirtyRef.current = true;
+    const next = Math.max(0, parseFloat((exercise.recommendedWeight + delta).toFixed(2)));
+    setRawWeightInputs((prev) => ({ ...prev, [exercise.id]: String(next) }));
+    handleUpdateExercise(workoutId, exercise.id, { recommendedWeight: next });
+  };
+
+  // Top Level Save / Cancel Handlers
+  const handleCancel = () => {
+    router.back();
+  };
+
+  const handleSave = async () => {
+    const trimmed = draft.name.trim();
+    if (!trimmed) {
+      Alert.alert(t('validationError'), t('programNameEmpty'));
+      return;
+    }
+    if (draft.workouts.length === 0) {
+      Alert.alert(t('validationError'), t('programMustHaveWorkout'));
+      return;
+    }
+
+    // Ensure all workouts have at least one exercise
+    for (const w of draft.workouts) {
+      if (!w.exercises || w.exercises.length === 0) {
+        Alert.alert(
+          language === 'uk' ? 'Порожнє тренування' : 'Empty Workout',
+          language === 'uk'
+            ? `Тренування "${w.name}" не містить вправ. Додайте хоча б одну вправу перед збереженням.`
+            : `Workout "${w.name}" has no exercises. Please add at least one exercise before saving.`
+        );
+        return;
+      }
+    }
+
+    // Pass the full draft object deeply cloned and guaranteed splitType: 'custom'
+    const customProgram: UserProgram = {
+      ...JSON.parse(JSON.stringify(draft)),
+      name: trimmed,
+      splitType: 'custom',
+    };
+
+    await setCustomProgram(customProgram);
+
+    try {
+      const currentOnboarding = await loadOnboarding();
+      await saveOnboarding({
+        ...(currentOnboarding ?? defaultOnboarding),
+        splitPreference: 'custom',
+      });
+    } catch {
+      // Storage error ignored
+    }
+
+    hapticSuccess();
+    router.back();
+  };
+
+  const selectedWorkout = selectedWorkoutId
+    ? draft.workouts.find((w) => w.id === selectedWorkoutId)
+    : null;
+
+  // Render Sub-View: Workout Editor
+  if (selectedWorkoutId && selectedWorkout) {
+    return (
+      <Screen>
+        {/* Workout Editor Top Header */}
+        <View style={styles.topBar}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setSelectedWorkoutId(null)}
+            style={styles.navButton}
+          >
+            <Text style={styles.cancelText}>‹ {t('routine')}</Text>
+          </Pressable>
+          <Text style={styles.topTitle}>{t('editWorkout')}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Delete workout day"
+              hitSlop={8}
+              onPress={() => handleDeleteWorkout(selectedWorkout.id)}
+            >
+              <Ionicons name="trash-outline" size={20} color="#FF453A" />
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setSelectedWorkoutId(null)}
+              style={styles.navButton}
+            >
+              <Text style={styles.saveNavText}>{t('done')}</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Workout Name Input */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>{t('workoutName')}</Text>
+          <TextInput
+            value={selectedWorkout.name}
+            onChangeText={(text) => handleWorkoutNameChange(selectedWorkout.id, text)}
+            placeholder="Workout Name"
+            placeholderTextColor={colors.muted}
+            style={styles.textInput}
+            autoCapitalize="words"
+          />
+          <Text style={styles.workoutSubFocus}>
+            {selectedWorkout.muscleGroups.map((m) => tm(m)).join(' • ')}
+          </Text>
+        </View>
+
+        {/* Workout Day Selector */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>{language === 'uk' ? 'ДЕНЬ ТИЖНЯ' : 'DAY OF THE WEEK'}</Text>
+          <View style={styles.weekdayChipRow}>
+            {ALL_WEEKDAYS.map((day) => {
+              const isSelected = selectedWorkout.dayLabel?.toUpperCase() === day;
+              return (
+                <Pressable
+                  key={day}
+                  accessibilityRole="button"
+                  accessibilityLabel={td(day)}
+                  onPress={() => {
+                    hapticLight();
+                    handleWorkoutDayLabelChange(selectedWorkout.id, day);
+                  }}
+                  style={[styles.weekdayChip, isSelected && styles.weekdayChipSelected]}
+                >
+                  <Text style={[styles.weekdayChipText, isSelected && styles.weekdayChipTextSelected]}>
+                    {td(day)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Exercises List */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionLabel}>
+              {t('exercises').toUpperCase()} ({selectedWorkout.exercises.length})
+            </Text>
+            <Text style={styles.subHelpText}>{t('reorderVariables')}</Text>
+          </View>
+
+          {selectedWorkout.exercises.map((exercise, exIndex) => {
+            const isFirst = exIndex === 0;
+            const isLast = exIndex === selectedWorkout.exercises.length - 1;
+            const weightDisplay =
+              rawWeightInputs[exercise.id] !== undefined
+                ? rawWeightInputs[exercise.id]
+                : String(exercise.recommendedWeight);
+            const incrementDisplay =
+              rawIncrementInputs[exercise.id] !== undefined
+                ? rawIncrementInputs[exercise.id]
+                : String(exercise.weightIncrement);
+
+            return (
+              <Card key={exercise.id} style={styles.exerciseCard}>
+                {/* Exercise Header & Order Controls */}
+                <View style={styles.exerciseHeader}>
+                  <View style={styles.exerciseMetaCol}>
+                    <Text style={styles.exerciseTitle}>{exercise.name}</Text>
+                    <Text style={styles.exerciseMuscle}>
+                      {tm(exercise.muscleGroup)}  •  {exercise.equipment}
+                    </Text>
+                  </View>
+
+                  <View style={styles.exerciseTopActions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => handleMoveExerciseUp(selectedWorkout.id, exIndex)}
+                      disabled={isFirst}
+                      style={({ pressed }) => [
+                        styles.miniIconButton,
+                        isFirst && styles.iconButtonDisabled,
+                        pressed && styles.buttonPressed,
+                      ]}
+                    >
+                      <Text style={[styles.miniIconText, isFirst && styles.iconTextDisabled]}>▲</Text>
+                    </Pressable>
+
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => handleMoveExerciseDown(selectedWorkout.id, exIndex)}
+                      disabled={isLast}
+                      style={({ pressed }) => [
+                        styles.miniIconButton,
+                        isLast && styles.iconButtonDisabled,
+                        pressed && styles.buttonPressed,
+                      ]}
+                    >
+                      <Text style={[styles.miniIconText, isLast && styles.iconTextDisabled]}>▼</Text>
+                    </Pressable>
+
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => handleDeleteExercise(selectedWorkout.id, exercise.id)}
+                      style={({ pressed }) => [
+                        styles.miniDeleteButton,
+                        pressed && styles.buttonPressed,
+                      ]}
+                    >
+                      <Text style={styles.miniDeleteText}>✕</Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                {/* Exercise Variables Grid */}
+                <View style={styles.variablesGrid}>
+                  {/* Sets Control */}
+                  <View style={styles.variableCol}>
+                    <View style={styles.variableLabelRow}>
+                      <Text style={styles.variableLabel}>{t('sets').toUpperCase()}</Text>
+                    </View>
+                    <View style={styles.stepperContainer}>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => handleSetsDelta(selectedWorkout.id, exercise, -1)}
+                        style={({ pressed }) => [
+                          styles.stepperButton,
+                          exercise.sets <= 1 && styles.iconButtonDisabled,
+                          pressed && styles.buttonPressed,
+                        ]}
+                      >
+                        <Text style={styles.stepperButtonText}>-</Text>
+                      </Pressable>
+
+                      <Text style={styles.stepperValueText}>{exercise.sets}</Text>
+
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => handleSetsDelta(selectedWorkout.id, exercise, 1)}
+                        style={({ pressed }) => [
+                          styles.stepperButton,
+                          pressed && styles.buttonPressed,
+                        ]}
+                      >
+                        <Text style={styles.stepperButtonText}>+</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+
+                  {/* Target Rep Range */}
+                  <View style={styles.variableCol}>
+                    <View style={styles.variableLabelRow}>
+                      <Text style={styles.variableLabel}>{t('reps').toUpperCase()}</Text>
+                    </View>
+                    <TextInput
+                      value={exercise.targetRepRange}
+                      onChangeText={(text) =>
+                        handleUpdateExercise(selectedWorkout.id, exercise.id, {
+                          targetRepRange: text,
+                        })
+                      }
+                      placeholder="8-10"
+                      placeholderTextColor={colors.muted}
+                      style={styles.gridInput}
+                    />
+                  </View>
+                </View>
+
+                <View style={[styles.variablesGrid, { marginTop: spacing.md }]}>
+                  {/* Recommended Weight */}
+                  <View style={styles.variableCol}>
+                    <View style={styles.variableLabelRow}>
+                      <Text style={styles.variableLabel} numberOfLines={1}>
+                        {language === 'uk' ? 'ВАГА (КГ)' : 'WEIGHT (KG)'}
+                      </Text>
+                    </View>
+                    <View style={styles.stepperContainer}>
+                      <Pressable
+                        onPress={() => handleWeightDelta(selectedWorkout.id, exercise, -2.5)}
+                        style={styles.stepperButton}
+                      >
+                        <Text style={styles.stepperButtonText}>-</Text>
+                      </Pressable>
+                      <TextInput
+                        value={weightDisplay}
+                        onChangeText={(text) => {
+                          setRawWeightInputs((prev) => ({ ...prev, [exercise.id]: text }));
+                          const num = parseFloat(text);
+                          if (!isNaN(num) && num >= 0) {
+                            handleUpdateExercise(selectedWorkout.id, exercise.id, {
+                              recommendedWeight: num,
+                            });
+                          }
+                        }}
+                        onBlur={() => {
+                          const num = parseFloat(weightDisplay);
+                          if (isNaN(num)) {
+                            setRawWeightInputs((prev) => ({
+                              ...prev,
+                              [exercise.id]: String(exercise.recommendedWeight),
+                            }));
+                          }
+                        }}
+                        keyboardType="decimal-pad"
+                        placeholder="0"
+                        placeholderTextColor={colors.muted}
+                        style={[styles.gridInput, styles.stepperInputCenter]}
+                      />
+                      <Pressable
+                        onPress={() => handleWeightDelta(selectedWorkout.id, exercise, 2.5)}
+                        style={styles.stepperButton}
+                      >
+                        <Text style={styles.stepperButtonText}>+</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+
+                  {/* Weight Increment */}
+                  <View style={styles.variableCol}>
+                    <View style={styles.variableLabelRow}>
+                      <Text style={styles.variableLabel} numberOfLines={1}>
+                        {language === 'uk' ? 'КРОК ВАГИ' : t('increment')}
+                      </Text>
+                    </View>
+                    <TextInput
+                      value={incrementDisplay}
+                      onChangeText={(text) => {
+                        setRawIncrementInputs((prev) => ({ ...prev, [exercise.id]: text }));
+                        const num = parseFloat(text);
+                        if (!isNaN(num) && num >= 0) {
+                          handleUpdateExercise(selectedWorkout.id, exercise.id, {
+                            weightIncrement: num,
+                          });
+                        }
+                      }}
+                      onBlur={() => {
+                        const num = parseFloat(incrementDisplay);
+                        if (isNaN(num)) {
+                          setRawIncrementInputs((prev) => ({
+                            ...prev,
+                            [exercise.id]: String(exercise.weightIncrement),
+                          }));
+                        }
+                      }}
+                      keyboardType="decimal-pad"
+                      placeholder="2.5"
+                      placeholderTextColor={colors.muted}
+                      style={styles.gridInput}
+                    />
+                  </View>
+                </View>
+
+                <View style={[styles.variablesGrid, { marginTop: spacing.md }]}>
+                  {/* Rest Duration */}
+                  <View style={styles.variableCol}>
+                    <View style={styles.variableLabelRow}>
+                      <Text style={styles.variableLabel} numberOfLines={1}>
+                        {language === 'uk' ? 'ВІДПОЧИНОК (СЕК)' : 'REST (SEC)'}
+                      </Text>
+                    </View>
+                    <TextInput
+                      value={String(exercise.restSeconds ?? 90)}
+                      onChangeText={(text) => {
+                        const num = parseInt(text, 10);
+                        if (!isNaN(num) && num >= 0 && num <= 600) {
+                          handleUpdateExercise(selectedWorkout.id, exercise.id, {
+                            restSeconds: num,
+                          });
+                        }
+                      }}
+                      keyboardType="number-pad"
+                      placeholder="90"
+                      placeholderTextColor={colors.muted}
+                      style={styles.gridInput}
+                    />
+                  </View>
+
+                  {/* Rest Presets */}
+                  <View style={styles.variableCol}>
+                    <View style={styles.variableLabelRow}>
+                      <Text style={styles.variableLabel} numberOfLines={1}>
+                        {language === 'uk' ? 'ПРЕСЕТИ ЧАСУ' : 'PRESETS'}
+                      </Text>
+                    </View>
+                    <View style={styles.presetsRow}>
+                      {[
+                        { sec: 0, label: '0s' },
+                        { sec: 15, label: '15s' },
+                        { sec: 60, label: '60s' },
+                        { sec: 90, label: '90s' },
+                      ].map(({ sec, label }) => {
+                        const isCurrent = (exercise.restSeconds ?? 90) === sec;
+                        return (
+                          <Pressable
+                            key={sec}
+                            onPress={() => {
+                              hapticLight();
+                              handleUpdateExercise(selectedWorkout.id, exercise.id, {
+                                restSeconds: sec,
+                              });
+                            }}
+                            style={[styles.presetBtn, isCurrent && styles.presetBtnActive]}
+                          >
+                            <Text
+                              style={[
+                                styles.presetBtnText,
+                                isCurrent && styles.presetBtnTextActive,
+                              ]}
+                            >
+                              {label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+                </View>
+              </Card>
+            );
+          })}
+
+          {selectedWorkout.exercises.length === 0 && (
+            <View style={styles.emptyWorkoutCard}>
+              <Ionicons name="barbell-outline" size={36} color="#6C7A8E" style={{ marginBottom: 8 }} />
+              <Text style={styles.emptyWorkoutTitle}>
+                {language === 'uk' ? 'У тренуванні ще немає вправ' : 'No exercises yet'}
+              </Text>
+              <Text style={styles.emptyWorkoutSubtitle}>
+                {language === 'uk'
+                  ? 'Натисніть кнопку нижче, щоб додати вправи з каталогу'
+                  : 'Tap the button below to add exercises from library'}
+              </Text>
+            </View>
+          )}
+
+          {/* Add Exercise Button */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setIsExercisePickerVisible(true)}
+            style={({ pressed }) => [styles.addExerciseButton, pressed && styles.buttonPressed]}
+          >
+            <Text style={styles.addExerciseText}>+ {t('addExercise').toUpperCase()}</Text>
+          </Pressable>
+        </View>
+
+        {/* Delete Workout Day Button */}
+        <View style={styles.section}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Delete Workout Day"
+            onPress={() => handleDeleteWorkout(selectedWorkout.id)}
+            style={({ pressed }) => [styles.deleteWorkoutFullBtn, pressed && styles.buttonPressed]}
+          >
+            <Ionicons name="trash-outline" size={16} color="#FF453A" />
+            <Text style={styles.deleteWorkoutFullText}>
+              {language === 'uk' ? 'Видалити цей день тренування' : 'Delete this workout day'}
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* Done Button */}
+        <View style={styles.bottomActions}>
+          <Button onPress={() => setSelectedWorkoutId(null)}>{t('done').toUpperCase()}</Button>
+        </View>
+
+        {/* Exercise Picker Modal */}
+        <ExercisePickerModal
+          visible={isExercisePickerVisible}
+          onClose={() => setIsExercisePickerVisible(false)}
+          onSelect={(libExercise) => handleAddExercise(selectedWorkout.id, libExercise)}
+        />
+      </Screen>
+    );
+  }
+
+  // Render Main View: Program Editor
+  return (
+    <Screen>
+      {/* Top Header */}
+      <View style={styles.topBar}>
+        <Pressable accessibilityRole="button" onPress={handleCancel} style={styles.navButton}>
+          <Text style={styles.cancelText}>{t('cancel')}</Text>
+        </Pressable>
+        <Text style={styles.topTitle}>{t('editProgram')}</Text>
+        <Pressable accessibilityRole="button" onPress={handleSave} style={styles.navButton}>
+          <Text style={styles.saveNavText}>{t('save')}</Text>
+        </Pressable>
+      </View>
+
+      {/* Program Name Input */}
+      <View style={styles.section}>
+        <Text style={styles.sectionLabel}>{t('programName')}</Text>
+        <TextInput
+          value={draft.name}
+          onChangeText={handleProgramNameChange}
+          placeholder="Program Name"
+          placeholderTextColor={colors.muted}
+          style={styles.textInput}
+          autoCapitalize="words"
+        />
+      </View>
+
+      {/* Workouts List */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionLabel}>{t('sessions')} ({draft.workouts.length})</Text>
+          <Text style={styles.subHelpText}>{t('reorderHelp')}</Text>
+        </View>
+
+        {draft.workouts.map((workout, index) => {
+          const isFirst = index === 0;
+          const isLast = index === draft.workouts.length - 1;
+
+          return (
+            <Card key={workout.id} style={styles.workoutCard}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setSelectedWorkoutId(workout.id)}
+                style={styles.cardHeader}
+              >
+                <View style={styles.workoutInfo}>
+                  <Text style={styles.workoutIndex}>
+                    {td(getWorkoutDayLabel(workout.dayLabel, index, undefined, draft.workouts.length))}
+                  </Text>
+                  <Text style={styles.workoutName}>{workout.name}</Text>
+                  <Text style={styles.workoutMeta}>
+                    {workout.exercises.length} {t('exercises').toLowerCase()}  •  ~{workout.estimatedMinutes} {t('min')}
+                  </Text>
+                  <Text style={styles.workoutFocus}>
+                    {workout.muscleGroups.map((m) => tm(m)).join(' • ')}
+                  </Text>
+                </View>
+                <Text style={styles.chevronArrow}>›</Text>
+              </Pressable>
+
+              {/* Action Buttons Row */}
+              <View style={styles.actionsRow}>
+                <View style={styles.reorderButtons}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => handleMoveWorkoutUp(index)}
+                    disabled={isFirst}
+                    style={({ pressed }) => [
+                      styles.iconButton,
+                      isFirst && styles.iconButtonDisabled,
+                      pressed && styles.buttonPressed,
+                    ]}
+                  >
+                    <Text style={[styles.iconText, isFirst && styles.iconTextDisabled]}>▲ {t('moveUp')}</Text>
+                  </Pressable>
+
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => handleMoveWorkoutDown(index)}
+                    disabled={isLast}
+                    style={({ pressed }) => [
+                      styles.iconButton,
+                      isLast && styles.iconButtonDisabled,
+                      pressed && styles.buttonPressed,
+                    ]}
+                  >
+                    <Text style={[styles.iconText, isLast && styles.iconTextDisabled]}>▼ {t('moveDown')}</Text>
+                  </Pressable>
+                </View>
+
+                <View style={styles.rightActionsRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setSelectedWorkoutId(workout.id)}
+                    style={({ pressed }) => [
+                      styles.editWorkoutButton,
+                      pressed && styles.buttonPressed,
+                    ]}
+                  >
+                    <Text style={styles.editWorkoutText}>{t('edit')}</Text>
+                  </Pressable>
+
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => handleDeleteWorkout(workout.id)}
+                    style={({ pressed }) => [
+                      styles.deleteButton,
+                      pressed && styles.buttonPressed,
+                    ]}
+                  >
+                    <Text style={styles.deleteText}>{t('delete')}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </Card>
+          );
+        })}
+
+        {/* Add Workout Button */}
+        <Pressable
+          accessibilityRole="button"
+          onPress={handleAddNewWorkout}
+          style={({ pressed }) => [styles.addWorkoutButton, pressed && styles.buttonPressed]}
+        >
+          <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
+          <Text style={styles.addWorkoutText}>
+            {language === 'uk' ? 'ДОДАТИ НОВЕ ТРЕНУВАННЯ' : 'ADD NEW WORKOUT'}
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* Bottom Save / Cancel Controls */}
+      <View style={styles.bottomActions}>
+        <Button onPress={handleSave}>{t('saveChanges').toUpperCase()}</Button>
+        <Button secondary onPress={handleCancel}>{t('discardChanges')}</Button>
+      </View>
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xl,
+    paddingVertical: spacing.sm,
+  },
+  navButton: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    minWidth: 60,
+  },
+  cancelText: {
+    color: colors.secondary,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  topTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  saveNavText: {
+    color: colors.primary,
+    fontSize: 15,
+    fontWeight: '800',
+    textAlign: 'right',
+  },
+  section: {
+    marginBottom: spacing.xxl,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  sectionLabel: {
+    color: colors.secondary,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.3,
+    marginBottom: spacing.sm,
+  },
+  subHelpText: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  textInput: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 14,
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: '700',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    minHeight: 52,
+  },
+  workoutSubFocus: {
+    color: colors.muted,
+    fontSize: 12,
+    marginTop: spacing.xs,
+  },
+  workoutCard: {
+    marginBottom: spacing.md,
+    padding: spacing.lg,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  workoutInfo: {
+    flex: 1,
+  },
+  workoutIndex: {
+    color: colors.primary,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  workoutName: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  workoutMeta: {
+    color: colors.secondary,
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  workoutFocus: {
+    color: colors.muted,
+    fontSize: 12,
+  },
+  chevronArrow: {
+    color: colors.secondary,
+    fontSize: 24,
+    paddingLeft: spacing.md,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  reorderButtons: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  rightActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  iconButton: {
+    backgroundColor: colors.elevated,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  iconButtonDisabled: {
+    opacity: 0.35,
+  },
+  buttonPressed: {
+    opacity: 0.6,
+  },
+  iconText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  iconTextDisabled: {
+    color: colors.muted,
+  },
+  editWorkoutButton: {
+    backgroundColor: colors.primaryMuted,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(200, 255, 61, 0.3)',
+  },
+  editWorkoutText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  deleteButton: {
+    backgroundColor: 'rgba(255, 92, 92, 0.12)',
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 92, 92, 0.3)',
+  },
+  deleteText: {
+    color: colors.danger,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  bottomActions: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.xxl,
+    gap: spacing.sm,
+  },
+
+  /* Exercise Card Styles */
+  exerciseCard: {
+    marginBottom: spacing.md,
+    padding: spacing.lg,
+  },
+  exerciseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: spacing.md,
+  },
+  exerciseMetaCol: {
+    flex: 1,
+  },
+  exerciseTitle: {
+    color: colors.text,
+    fontSize: 17,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  exerciseMuscle: {
+    color: colors.secondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  exerciseTopActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  miniIconButton: {
+    backgroundColor: colors.elevated,
+    borderRadius: 6,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  miniIconText: {
+    color: colors.text,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  miniDeleteButton: {
+    backgroundColor: 'rgba(255, 92, 92, 0.12)',
+    borderRadius: 6,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 92, 92, 0.3)',
+    marginLeft: spacing.xs,
+  },
+  miniDeleteText: {
+    color: colors.danger,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  variablesGrid: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  variableCol: {
+    flex: 1,
+  },
+  variableLabel: {
+    color: colors.secondary,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  variableLabelRow: {
+    height: 22,
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  presetsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    height: 44,
+    alignItems: 'center',
+  },
+  presetBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: colors.elevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  presetBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  presetBtnText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  presetBtnTextActive: {
+    color: '#000000',
+    fontWeight: '800',
+  },
+  weightLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  quickWeightRow: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  tinyStepBtn: {
+    backgroundColor: colors.elevated,
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  tinyStepText: {
+    color: colors.primary,
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  gridInput: {
+    backgroundColor: colors.elevated,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 10,
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    minHeight: 44,
+  },
+  stepperContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.elevated,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 10,
+    height: 44,
+    paddingHorizontal: 4,
+  },
+  stepperButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 7,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperButtonText: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '800',
+    lineHeight: 20,
+  },
+  stepperValueText: {
+    flex: 1,
+    textAlign: 'center',
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  stepperInputCenter: {
+    flex: 1,
+    textAlign: 'center',
+    borderWidth: 0,
+    minHeight: 38,
+    height: 38,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    backgroundColor: 'transparent',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  addExerciseButton: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderRadius: 14,
+    paddingVertical: spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+  },
+  addExerciseText: {
+    color: colors.primary,
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  addWorkoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+    borderStyle: 'dashed',
+    borderRadius: 16,
+    paddingVertical: spacing.md,
+    backgroundColor: 'rgba(200, 255, 61, 0.05)',
+    marginTop: spacing.md,
+  },
+  addWorkoutText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  emptyWorkoutCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+    borderRadius: 16,
+    backgroundColor: '#12161D',
+    borderWidth: 1,
+    borderColor: '#1E2530',
+    marginBottom: spacing.md,
+  },
+  emptyWorkoutTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  emptyWorkoutSubtitle: {
+    color: '#8E959F',
+    fontSize: 13,
+    textAlign: 'center',
+    maxWidth: 280,
+  },
+  weekdayChipRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 8,
+    justifyContent: 'space-between',
+  },
+  weekdayChip: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: '#161B22',
+    borderWidth: 1,
+    borderColor: '#242C38',
+  },
+  weekdayChipSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  weekdayChipText: {
+    color: '#8E9BAE',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  weekdayChipTextSelected: {
+    color: '#0B0D0F',
+    fontWeight: '900',
+  },
+  deleteWorkoutFullBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 69, 58, 0.3)',
+    backgroundColor: 'rgba(255, 69, 58, 0.06)',
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  deleteWorkoutFullText: {
+    color: '#FF453A',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+});
