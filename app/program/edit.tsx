@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useMemo, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Screen } from '@/components/ui/Screen';
 import { ExercisePickerModal } from '@/components/program/ExercisePickerModal';
-import { colors } from '@/constants/colors';
+import { useThemeColors, type ThemeColors } from '@/constants/colors';
 import { spacing } from '@/constants/spacing';
 import type { LibraryExercise } from '@/lib/exerciseLibrary';
 import { hapticLight, hapticMedium, hapticSuccess } from '@/lib/haptics';
@@ -26,6 +26,8 @@ import type { UserExercise, UserProgram, UserWorkout } from '@/types/userProgram
 
 export default function ProgramEdit() {
   const { t, tm, td, language } = useI18n();
+  const colors = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const activeProgram = useProgramStore((state) => state.program);
   const setCustomProgram = useProgramStore((state) => state.setCustomProgram);
   const saveRoutine = useProgramStore((state) => state.saveRoutine);
@@ -193,7 +195,12 @@ export default function ProgramEdit() {
         const temp = exercises[exerciseIndex - 1];
         exercises[exerciseIndex - 1] = exercises[exerciseIndex];
         exercises[exerciseIndex] = temp;
-        return { ...w, exercises };
+        return {
+          ...w,
+          exercises: exercises.map((ex, i) =>
+            i === exercises.length - 1 ? { ...ex, supersetWithNext: false } : ex
+          ),
+        };
       }),
     }));
   };
@@ -212,7 +219,37 @@ export default function ProgramEdit() {
         const temp = exercises[exerciseIndex + 1];
         exercises[exerciseIndex + 1] = exercises[exerciseIndex];
         exercises[exerciseIndex] = temp;
-        return { ...w, exercises };
+        return {
+          ...w,
+          exercises: exercises.map((ex, i) =>
+            i === exercises.length - 1 ? { ...ex, supersetWithNext: false } : ex
+          ),
+        };
+      }),
+    }));
+  };
+
+  const handleToggleSuperset = (workoutId: string, exerciseIndex: number) => {
+    hapticMedium();
+    isDirtyRef.current = true;
+    setDraft((prev) => ({
+      ...prev,
+      workouts: prev.workouts.map((w) => {
+        if (w.id !== workoutId) return w;
+        if (exerciseIndex < 0 || exerciseIndex >= w.exercises.length - 1) return w;
+        const targetWillEnable = !w.exercises[exerciseIndex].supersetWithNext;
+        return {
+          ...w,
+          exercises: w.exercises.map((ex, i) => {
+            if (i === exerciseIndex) {
+              return { ...ex, supersetWithNext: targetWillEnable };
+            }
+            if (targetWillEnable && (i === exerciseIndex - 1 || i === exerciseIndex + 1)) {
+              return { ...ex, supersetWithNext: false };
+            }
+            return ex;
+          }),
+        };
       }),
     }));
   };
@@ -229,7 +266,11 @@ export default function ProgramEdit() {
       ...prev,
       workouts: prev.workouts.map((w) => {
         if (w.id !== workoutId) return w;
-        const remainingExercises = w.exercises.filter((ex) => ex.id !== exerciseId);
+        const remainingExercises = w.exercises
+          .filter((ex) => ex.id !== exerciseId)
+          .map((ex, i, arr) =>
+            i === arr.length - 1 ? { ...ex, supersetWithNext: false } : ex
+          );
         const updatedMuscles = [...new Set(remainingExercises.map((e) => e.muscleGroup))];
         return {
           ...w,
@@ -447,6 +488,10 @@ export default function ProgramEdit() {
           {selectedWorkout.exercises.map((exercise, exIndex) => {
             const isFirst = exIndex === 0;
             const isLast = exIndex === selectedWorkout.exercises.length - 1;
+            const isSupersetA1 = Boolean(exercise.supersetWithNext && !isLast);
+            const isSupersetA2 = Boolean(
+              exIndex > 0 && selectedWorkout.exercises[exIndex - 1]?.supersetWithNext
+            );
             const weightDisplay =
               rawWeightInputs[exercise.id] !== undefined
                 ? rawWeightInputs[exercise.id]
@@ -457,17 +502,65 @@ export default function ProgramEdit() {
                 : String(exercise.weightIncrement);
 
             return (
-              <Card key={exercise.id} style={styles.exerciseCard}>
+              <Card
+                key={exercise.id}
+                style={[
+                  styles.exerciseCard,
+                  (isSupersetA1 || isSupersetA2) && {
+                    borderColor: 'rgba(168, 85, 247, 0.45)',
+                    borderWidth: 1.5,
+                  },
+                ]}
+              >
                 {/* Exercise Header & Order Controls */}
                 <View style={styles.exerciseHeader}>
                   <View style={styles.exerciseMetaCol}>
-                    <Text style={styles.exerciseTitle}>{exercise.name}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      {(isSupersetA1 || isSupersetA2) && (
+                        <View
+                          style={{
+                            backgroundColor: 'rgba(168, 85, 247, 0.18)',
+                            borderWidth: 1,
+                            borderColor: 'rgba(168, 85, 247, 0.4)',
+                            borderRadius: 6,
+                            paddingHorizontal: 6,
+                            paddingVertical: 2,
+                          }}
+                        >
+                          <Text style={{ color: '#A855F7', fontSize: 10, fontWeight: '900' }}>
+                            {isSupersetA1 ? 'A1' : 'A2'}
+                          </Text>
+                        </View>
+                      )}
+                      <Text style={styles.exerciseTitle}>{exercise.name}</Text>
+                    </View>
                     <Text style={styles.exerciseMuscle}>
                       {tm(exercise.muscleGroup)}  •  {exercise.equipment}
                     </Text>
                   </View>
 
                   <View style={styles.exerciseTopActions}>
+                    {!isLast && (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => handleToggleSuperset(selectedWorkout.id, exIndex)}
+                        style={({ pressed }) => [
+                          styles.miniIconButton,
+                          isSupersetA1 && {
+                            backgroundColor: 'rgba(168, 85, 247, 0.2)',
+                            borderColor: '#A855F7',
+                          },
+                          pressed && styles.buttonPressed,
+                        ]}
+                      >
+                        <Ionicons
+                          name={isSupersetA1 ? 'link' : 'link-outline'}
+                          size={14}
+                          color={isSupersetA1 ? '#A855F7' : colors.text}
+                        />
+                      </Pressable>
+                    )}
+
                     <Pressable
                       accessibilityRole="button"
                       onPress={() => handleMoveExerciseUp(selectedWorkout.id, exIndex)}
@@ -892,7 +985,7 @@ export default function ProgramEdit() {
           onPress={handleAddNewWorkout}
           style={({ pressed }) => [styles.addWorkoutButton, pressed && styles.buttonPressed]}
         >
-          <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
+          <Ionicons name="add-circle-outline" size={20} color={colors.primaryText} />
           <Text style={styles.addWorkoutText}>
             {language === 'uk' ? 'ДОДАТИ НОВЕ ТРЕНУВАННЯ' : 'ADD NEW WORKOUT'}
           </Text>
@@ -908,7 +1001,7 @@ export default function ProgramEdit() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -932,7 +1025,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   saveNavText: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 15,
     fontWeight: '800',
     textAlign: 'right',
@@ -988,7 +1081,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   workoutIndex: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 0.8,
@@ -1061,10 +1154,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderWidth: 1,
-    borderColor: 'rgba(200, 255, 61, 0.3)',
+    borderColor: colors.accentLine,
   },
   editWorkoutText: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 12,
     fontWeight: '800',
   },
@@ -1285,7 +1378,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   addExerciseText: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -1296,15 +1389,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     borderWidth: 1.5,
-    borderColor: colors.primary,
+    borderColor: colors.accentLine,
     borderStyle: 'dashed',
     borderRadius: 16,
     paddingVertical: spacing.md,
-    backgroundColor: 'rgba(200, 255, 61, 0.05)',
+    backgroundColor: colors.primaryMuted,
     marginTop: spacing.md,
   },
   addWorkoutText: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 13,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -1314,19 +1407,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.xl,
     borderRadius: 16,
-    backgroundColor: '#12161D',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#1E2530',
+    borderColor: colors.border,
     marginBottom: spacing.md,
   },
   emptyWorkoutTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 16,
     fontWeight: '800',
     marginBottom: 4,
   },
   emptyWorkoutSubtitle: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 13,
     textAlign: 'center',
     maxWidth: 280,
@@ -1343,21 +1436,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 10,
-    backgroundColor: '#161B22',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#242C38',
+    borderColor: colors.border,
   },
   weekdayChipSelected: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
   },
   weekdayChipText: {
-    color: '#8E9BAE',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '800',
   },
   weekdayChipTextSelected: {
-    color: '#0B0D0F',
+    color: colors.onPrimary,
     fontWeight: '900',
   },
   deleteWorkoutFullBtn: {

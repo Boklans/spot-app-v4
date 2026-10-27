@@ -1,6 +1,6 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Image,
@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors } from '@/constants/colors';
+import { cardElevation, useThemeColors, type ThemeColors } from '@/constants/colors';
 import { WorkoutEditorModal } from '@/components/program/WorkoutEditorModal';
 import { getExerciseImage } from '@/lib/exerciseImages';
 import { hapticLight, hapticMedium } from '@/lib/haptics';
@@ -32,6 +32,8 @@ import type { UserProgram, UserWorkout } from '@/types/userProgram';
 
 export default function Program() {
   const { t, tm, td, te, tw, language } = useI18n();
+  const colors = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { formatWithUnit } = useWeightUnit();
   const program = useProgramStore((state) => state.program);
   const progress = useProgramProgressStore((state) => state.progress);
@@ -254,23 +256,54 @@ export default function Program() {
               </View>
 
               <View style={styles.exerciseList}>
-                {workout.exercises.map((exercise, exIndex) => (
-                  <View key={`${exercise.name}-${exIndex}`} style={styles.exerciseRow}>
-                    <View style={styles.exerciseRowLeft}>
-                      <View style={styles.exerciseThumbMini}>
-                        <Image
-                          source={getExerciseImage(exercise.name)}
-                          style={styles.exerciseThumb}
-                          resizeMode="cover"
-                        />
+                {workout.exercises.map((exercise, exIndex) => {
+                  const isSupersetA1 = Boolean(
+                    exercise.supersetWithNext && exIndex < workout.exercises.length - 1
+                  );
+                  const isSupersetA2 = Boolean(
+                    exIndex > 0 && workout.exercises[exIndex - 1]?.supersetWithNext
+                  );
+
+                  return (
+                    <View key={`${exercise.name}-${exIndex}`} style={styles.exerciseRow}>
+                      <View style={styles.exerciseRowLeft}>
+                        <View style={styles.exerciseThumbMini}>
+                          <Image
+                            source={getExerciseImage(exercise.name)}
+                            style={styles.exerciseThumb}
+                            resizeMode="cover"
+                          />
+                        </View>
+                        {(isSupersetA1 || isSupersetA2) && (
+                          <View
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 2,
+                              backgroundColor: 'rgba(168, 85, 247, 0.16)',
+                              borderWidth: 1,
+                              borderColor: 'rgba(168, 85, 247, 0.35)',
+                              borderRadius: 5,
+                              paddingHorizontal: 5,
+                              paddingVertical: 1.5,
+                            }}
+                          >
+                            <Ionicons name="link" size={9} color="#A855F7" />
+                            <Text style={{ color: '#A855F7', fontSize: 9.5, fontWeight: '800' }}>
+                              {isSupersetA1 ? 'A1' : 'A2'}
+                            </Text>
+                          </View>
+                        )}
+                        <Text numberOfLines={1} style={styles.exerciseNameText}>
+                          {te(exercise.name)}
+                        </Text>
                       </View>
-                      <Text numberOfLines={1} style={styles.exerciseNameText}>{te(exercise.name)}</Text>
+                      <Text style={styles.exerciseMetaText}>
+                        {exercise.sets} × {exercise.targetRepRange}
+                      </Text>
                     </View>
-                    <Text style={styles.exerciseMetaText}>
-                      {exercise.sets} × {exercise.targetRepRange}
-                    </Text>
-                  </View>
-                ))}
+                  );
+                })}
               </View>
             </Pressable>
           );
@@ -326,10 +359,10 @@ export default function Program() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#0E1114',
+    backgroundColor: colors.background,
   },
   header: {
     paddingHorizontal: 24,
@@ -337,13 +370,13 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   title: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 28,
     fontWeight: '700',
     letterSpacing: -0.4,
   },
   subtitle: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 13.5,
     fontWeight: '500',
     marginTop: 4,
@@ -363,29 +396,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 12,
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
   },
   splitChipActive: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.activeChipBg,
+    borderColor: colors.activeChipBg,
   },
   splitChipText: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 13,
     fontWeight: '600',
   },
   splitChipTextActive: {
-    color: '#0B0D0F',
+    color: colors.activeChipText,
     fontWeight: '700',
   },
   customProgramHeaderBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 14,
     marginTop: 12,
     gap: 12,
+    ...cardElevation(colors),
   },
   customProgramLeft: {
     flexDirection: 'row',
@@ -395,16 +432,16 @@ const styles = StyleSheet.create({
   customProgramTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: colors.text,
   },
   customProgramSubtitle: {
     fontSize: 12,
     fontWeight: '400',
-    color: '#8E959F',
+    color: colors.secondary,
     marginTop: 2,
   },
   openBuilderBtn: {
-    backgroundColor: '#1E2530',
+    backgroundColor: colors.elevated,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
@@ -412,12 +449,13 @@ const styles = StyleSheet.create({
   openBuilderBtnText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: colors.text,
   },
   workoutCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 18,
+    ...cardElevation(colors),
   },
   workoutCardHead: {
     flexDirection: 'row',
@@ -433,7 +471,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.elevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -443,7 +481,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   workoutNumber: {
-    color: '#7D8796',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -456,30 +494,31 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.accentLine,
   },
   upNextBadgeText: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   workoutName: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 20,
     fontWeight: '700',
     marginTop: 4,
     letterSpacing: -0.3,
   },
   workoutMusclesText: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 13,
     fontWeight: '500',
     marginTop: 4,
+    fontVariant: ['tabular-nums'],
   },
   exerciseList: {
     marginTop: 14,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: colors.divider,
     paddingTop: 10,
     gap: 8,
   },
@@ -499,7 +538,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 8,
-    backgroundColor: '#0E1115',
+    backgroundColor: colors.elevated,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
@@ -509,13 +548,13 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   exerciseNameText: {
-    color: '#E5E9F0',
+    color: colors.text,
     fontSize: 13.5,
     fontWeight: '500',
     flex: 1,
   },
   exerciseMetaText: {
-    color: '#7D8796',
+    color: colors.secondary,
     fontSize: 12.5,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
@@ -525,15 +564,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     paddingVertical: 14,
     borderRadius: 16,
     marginTop: 4,
     marginBottom: 20,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
   },
   addCustomWorkoutBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#A0A8B4',
+    color: colors.secondary,
   },
 });

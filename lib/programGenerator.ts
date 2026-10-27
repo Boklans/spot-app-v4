@@ -238,6 +238,17 @@ const exerciseOptions = {
     option('Barbell Lunges', 'Legs', 35, 'barbell'),
     option('Reverse Lunges', 'Legs', 0, 'bodyweight'),
   ],
+  lateralRaise: [
+    option('Lateral Raises', 'Shoulders', 6, 'dumbbells', '12-15'),
+    option('Cable Lateral Raise', 'Shoulders', 7.5, 'machines', '12-15'),
+    option('Dumbbell Shoulder Press', 'Shoulders', 12, 'dumbbells'),
+  ],
+  gluteAccessory: [
+    option('Bulgarian Split Squat', 'Glutes', 12, 'dumbbells', '10-12'),
+    option('Walking Lunges', 'Legs', 12, 'dumbbells', '10-12'),
+    option('Cable Pull-Through', 'Glutes', 30, 'machines', '12-15'),
+    option('Glute Bridge', 'Glutes', 0, 'bodyweight', '12-15'),
+  ],
 };
 
 function isAvailable(required: EquipmentId, equipment: EquipmentId[]) {
@@ -519,6 +530,140 @@ function upperLowerTemplates(
         ? primaryReps
         : accessoryReps,
     })),
+  }));
+}
+
+function femaleFullBodyTemplates(
+  equipment: EquipmentId[],
+  strength = false,
+  limitations: TrainingLimitation[] = []
+): WorkoutTemplate[] {
+  const compoundReps = strength ? '6-8' : '8-12';
+  const accessoryReps = '10-15';
+
+  const templates: WorkoutTemplate[] = [
+    {
+      name: 'Full Body A (Glutes & Quads)',
+      exercises: [
+        pick(exerciseOptions.glutes, equipment, limitations),
+        pick(exerciseOptions.squat, equipment, limitations),
+        pick(exerciseOptions.verticalPull, equipment, limitations),
+        pick(exerciseOptions.inclinePush, equipment, limitations),
+        pick(exerciseOptions.core, equipment, limitations),
+      ],
+      estimatedMinutes: 50,
+    },
+    {
+      name: 'Full Body B (Glutes & Hamstrings)',
+      exercises: [
+        pick(exerciseOptions.hinge, equipment, limitations),
+        pick(exerciseOptions.lunges, equipment, limitations),
+        pick(exerciseOptions.row, equipment, limitations),
+        pick(exerciseOptions.lateralRaise, equipment, limitations),
+        pick(exerciseOptions.core, equipment, limitations),
+      ],
+      estimatedMinutes: 50,
+    },
+    {
+      name: 'Full Body C (Sculpt & Silhouette)',
+      exercises: [
+        pick(exerciseOptions.glutes, equipment, limitations),
+        pick(exerciseOptions.squat, equipment, limitations),
+        pick(exerciseOptions.lateralRaise, equipment, limitations),
+        pick(exerciseOptions.verticalPull, equipment, limitations),
+        pick(exerciseOptions.gluteAccessory, equipment, limitations),
+      ],
+      estimatedMinutes: 50,
+    },
+  ];
+
+  return templates.map((template) => ({
+    ...template,
+    exercises: template.exercises.map((exercise) => {
+      const lower = exercise.name.toLowerCase();
+      const isCompound =
+        lower.includes('thrust') ||
+        lower.includes('deadlift') ||
+        lower.includes('squat');
+      return {
+        ...exercise,
+        targetRepRange: isCompound ? compoundReps : accessoryReps,
+      };
+    }),
+  }));
+}
+
+function femaleUpperLowerTemplates(
+  equipment: EquipmentId[],
+  strength = false,
+  limitations: TrainingLimitation[] = []
+): WorkoutTemplate[] {
+  const compoundReps = strength ? '6-8' : '8-12';
+  const accessoryReps = '10-15';
+
+  const lowerA: WorkoutTemplate = {
+    name: 'Lower A (Glutes & Quads)',
+    exercises: [
+      pick(exerciseOptions.glutes, equipment, limitations),
+      pick(exerciseOptions.squat, equipment, limitations),
+      pick(exerciseOptions.lunges, equipment, limitations),
+      pick(exerciseOptions.legAccessory, equipment, limitations),
+      pick(exerciseOptions.core, equipment, limitations),
+    ],
+    estimatedMinutes: 50,
+  };
+
+  const upperA: WorkoutTemplate = {
+    name: 'Upper A (Back & Posture)',
+    exercises: [
+      pick(exerciseOptions.verticalPull, equipment, limitations),
+      pick(exerciseOptions.shoulderPush, equipment, limitations),
+      pick(exerciseOptions.row, equipment, limitations),
+      pick(exerciseOptions.lateralRaise, equipment, limitations),
+      pick(exerciseOptions.triceps, equipment, limitations),
+    ],
+    estimatedMinutes: 45,
+  };
+
+  const lowerB: WorkoutTemplate = {
+    name: 'Lower B (Glutes & Hamstrings)',
+    exercises: [
+      pick(exerciseOptions.hinge, equipment, limitations),
+      pick(exerciseOptions.glutes, equipment, limitations),
+      pick(exerciseOptions.lunges, equipment, limitations),
+      pick(exerciseOptions.calves, equipment, limitations),
+      pick(exerciseOptions.core, equipment, limitations),
+    ],
+    estimatedMinutes: 50,
+  };
+
+  const upperB: WorkoutTemplate = {
+    name: 'Upper B (Sculpt & Core)',
+    exercises: [
+      pick(exerciseOptions.inclinePush, equipment, limitations),
+      pick(exerciseOptions.row, equipment, limitations),
+      pick(exerciseOptions.lateralRaise, equipment, limitations),
+      pick(exerciseOptions.biceps, equipment, limitations),
+      pick(exerciseOptions.core, equipment, limitations),
+    ],
+    estimatedMinutes: 45,
+  };
+
+  const templates = [lowerA, upperA, lowerB, upperB];
+
+  return templates.map((template) => ({
+    ...template,
+    exercises: template.exercises.map((exercise) => {
+      const lower = exercise.name.toLowerCase();
+      const isCompound =
+        lower.includes('thrust') ||
+        lower.includes('deadlift') ||
+        lower.includes('squat');
+      return {
+        ...exercise,
+        targetRepRange: isCompound ? compoundReps : accessoryReps,
+      };
+    }),
   }));
 }
 
@@ -1037,21 +1182,74 @@ export function generateProgram(onboarding: OnboardingData): GeneratedProgram {
   let description: string;
   let splitType: WorkoutSplitType;
 
-  if (onboarding.splitPreference === 'full_body') {
+  const isFemale =
+    onboarding.sex === 'female' ||
+    useUserProfileStore.getState().profile.sex === 'female';
+  const isUk = useUserProfileStore.getState().profile.language === 'uk';
+
+  if (onboarding.splitPreference === 'custom') {
+    splitType = 'custom';
+    templates = customSplitTemplates(equipment, limitations);
+    name = 'Custom Athlete Split';
+    description = 'Targeted muscle group split with freedom to customize exercises.';
+  } else if (onboarding.splitPreference === 'blank') {
+    splitType = 'blank';
+    templates = Array.from({ length: frequency }, (_, idx) => ({
+      name: `Workout ${String.fromCharCode(65 + idx)}`,
+      exercises: [],
+      estimatedMinutes: 45,
+    }));
+    name = 'Custom Routine';
+    description = 'Your custom workouts built from scratch.';
+  } else if (onboarding.splitPreference === 'full_body') {
     splitType = 'full_body';
-    templates = fullBodyTemplates(equipment, onboarding.goal === 'get_stronger', priorities, limitations);
-    name = onboarding.goal === 'get_stronger' ? 'Full Body Strength' : 'Full Body Hypertrophy';
-    description = 'High-frequency full-body sessions hitting every muscle group with maximum recovery.';
-  } else if (onboarding.splitPreference === 'push_pull_legs') {
-    splitType = 'push_pull_legs';
-    templates = pushPullLegsTemplates(equipment, priorities, limitations);
-    name = 'Push / Pull / Legs (PPL)';
-    description = 'Specialized split targeting synergistic muscle groups with high focus and pump.';
+    if (isFemale) {
+      templates = femaleFullBodyTemplates(equipment, onboarding.goal === 'get_stronger', limitations);
+      name = isUk ? 'Скульпт & Тонус (Сідниці та Кор)' : 'Sculpt & Tone (Glute Focus)';
+      description = isUk
+        ? 'Програма на все тіло з високою частотою на сідничні м’язи, поставу та кор, оптимізована для жіночої фізіології.'
+        : 'High-frequency glute hypertrophy and aesthetic posture conditioning tailored for female athletes.';
+    } else {
+      templates = fullBodyTemplates(equipment, onboarding.goal === 'get_stronger', priorities, limitations);
+      name = onboarding.goal === 'get_stronger' ? 'Full Body Strength' : 'Full Body Hypertrophy';
+      description = 'High-frequency full-body sessions hitting every muscle group with maximum recovery.';
+    }
   } else if (onboarding.splitPreference === 'upper_lower') {
     splitType = 'upper_lower';
-    templates = upperLowerTemplates(equipment, onboarding.goal === 'get_stronger', priorities, limitations);
-    name = 'Upper / Lower Split';
-    description = 'Classic balanced structure separating upper body pushing/pulling and lower body power.';
+    if (isFemale) {
+      templates = femaleUpperLowerTemplates(equipment, onboarding.goal === 'get_stronger', limitations);
+      name = isUk ? 'Жіночий спліт: Сідниці та Верх' : 'Glute & Silhouette Split';
+      description = isUk
+        ? 'Спліт Верх/Низ з акцентом на розвиток сідниць, талію та підтягнуті дельти.'
+        : 'Targeted split prioritizing glute development, waist taper, and toned shoulders.';
+    } else {
+      templates = upperLowerTemplates(equipment, onboarding.goal === 'get_stronger', priorities, limitations);
+      name = 'Upper / Lower Split';
+      description = 'Classic balanced structure separating upper body pushing/pulling and lower body power.';
+    }
+  } else if (onboarding.splitPreference === 'push_pull_legs') {
+    splitType = 'push_pull_legs';
+    templates = pushPullLegsTemplates(equipment, isFemale ? ['lower_glutes'] : priorities, limitations);
+    name = isFemale
+      ? (isUk ? 'PPL (Сідниці & Силует)' : 'Push / Pull / Legs (Glute Focus)')
+      : 'Push / Pull / Legs (PPL)';
+    description = 'Specialized split targeting synergistic muscle groups with high focus and pump.';
+  } else if (isFemale) {
+    if (frequency <= 3) {
+      splitType = 'full_body';
+      templates = femaleFullBodyTemplates(equipment, onboarding.goal === 'get_stronger', limitations);
+      name = isUk ? 'Скульпт & Тонус (Сідниці та Кор)' : 'Sculpt & Tone (Glute Focus)';
+      description = isUk
+        ? 'Програма з високою частотою на сідничні м’язи, поставу та кор, оптимізована для жіночої фізіології.'
+        : 'High-frequency glute hypertrophy and aesthetic posture conditioning tailored for female athletes.';
+    } else {
+      splitType = 'upper_lower';
+      templates = femaleUpperLowerTemplates(equipment, onboarding.goal === 'get_stronger', limitations);
+      name = isUk ? 'Жіночий спліт: Сідниці та Верх' : 'Glute & Silhouette Split';
+      description = isUk
+        ? '4-денний спліт з акцентом на розвиток сідниць, талію та підтягнуті дельти.'
+        : 'Targeted split prioritizing glute development, waist taper, and toned shoulders.';
+    }
   } else if (onboarding.splitPreference === 'custom') {
     splitType = 'custom';
     templates = customSplitTemplates(equipment, limitations);

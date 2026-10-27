@@ -129,7 +129,7 @@ export function Stack(_props: {
         width: '100%',
         height: '100%',
         minHeight: 0,
-        backgroundColor: '#0B0D0F',
+        backgroundColor: 'transparent',
         overflow: 'hidden',
         position: 'relative',
       }}
@@ -163,14 +163,25 @@ export function Tabs({ screenOptions, children }: TabsProps) {
     ? current.pathname.replace('/(tabs)/', '') || 'index'
     : 'index';
 
-  const tabConfigs: Array<{ name: string; title: string }> = [];
+  const tabConfigs: Array<{
+    name: string;
+    title: string;
+    tabBarIcon?: (props: { color: string; size: number; focused: boolean }) => React.ReactNode;
+  }> = [];
   React.Children.forEach(children, (child) => {
     if (React.isValidElement(child) && child.props) {
-      const p = child.props as { name?: string; options?: { title?: string } };
+      const p = child.props as {
+        name?: string;
+        options?: {
+          title?: string;
+          tabBarIcon?: (props: { color: string; size: number; focused: boolean }) => React.ReactNode;
+        };
+      };
       if (p.name) {
         tabConfigs.push({
           name: p.name,
           title: p.options?.title || p.name,
+          tabBarIcon: p.options?.tabBarIcon,
         });
       }
     }
@@ -194,7 +205,7 @@ export function Tabs({ screenOptions, children }: TabsProps) {
         width: '100%',
         height: '100%',
         overflow: 'hidden',
-        backgroundColor: '#0B0D0F',
+        backgroundColor: 'transparent',
       }}
     >
       <div
@@ -218,7 +229,6 @@ export function Tabs({ screenOptions, children }: TabsProps) {
           alignItems: 'center',
           justifyContent: 'space-around',
           backgroundColor: '#15181C',
-          borderTop: '1px solid #292E35',
           height: 76,
           paddingTop: 8,
           paddingBottom: 12,
@@ -232,10 +242,15 @@ export function Tabs({ screenOptions, children }: TabsProps) {
           const opts =
             typeof screenOptions === 'function'
               ? screenOptions({ route: { name: tab.name } })
-              : {};
+              : (screenOptions as Record<string, unknown>) || {};
           const activeColor = (opts.tabBarActiveTintColor as string) || '#C8FF3D';
           const inactiveColor = (opts.tabBarInactiveTintColor as string) || '#555C65';
           const color = focused ? activeColor : inactiveColor;
+          const iconRenderer =
+            tab.tabBarIcon ||
+            (opts.tabBarIcon as
+              | ((props: { color: string; size: number; focused: boolean }) => React.ReactNode)
+              | undefined);
 
           return (
             <button
@@ -258,7 +273,7 @@ export function Tabs({ screenOptions, children }: TabsProps) {
                 padding: 0,
               }}
             >
-              {opts.tabBarIcon ? opts.tabBarIcon({ color, size: 22, focused }) : null}
+              {iconRenderer ? iconRenderer({ color, size: 22, focused }) : null}
               <span
                 style={{
                   fontSize: 11,
@@ -293,6 +308,18 @@ export const DarkTheme = {
     text: '#F5F5F5',
     border: '#292E35',
     notification: '#FF5C5C',
+  },
+};
+
+export const DefaultTheme = {
+  dark: false,
+  colors: {
+    primary: '#C8FF3D',
+    background: '#F3F5F8',
+    card: '#FFFFFF',
+    text: '#0E1114',
+    border: '#E2E8F0',
+    notification: '#DC2626',
   },
 };
 

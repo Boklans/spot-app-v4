@@ -1,10 +1,11 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
-import { colors } from '@/constants/colors';
+import { HomeSkeleton } from '@/components/ui/Skeleton';
+import { cardElevation, useThemeColors, type ThemeColors } from '@/constants/colors';
 import { hapticLight, hapticMedium } from '@/lib/haptics';
 import { countWorkoutsThisWeek, getStartOfWeek } from '@/lib/progressCalculator';
 import { findLatestExerciseSets, inferEquipmentFromName, recommendWeight } from '@/lib/adaptiveProgression';
@@ -19,18 +20,27 @@ import { loadOnboarding } from '@/store/workoutStore';
 
 export default function Home() {
   const { t, tm, te, tw, language } = useI18n();
+  const colors = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { formatVolume, formatWithUnit } = useWeightUnit();
   const [name, setName] = useState('');
   const [focusKey] = useState(0);
 
   const profile = useUserProfileStore((state) => state.profile);
   const program = useProgramStore((state) => state.program);
+  const programHydrated = useProgramStore((state) => state.hydrated);
   const activeSession = useWorkoutSessionStore((state) => state.session);
   const progress = useProgramProgressStore((state) => state.progress);
   const setNextWorkout = useProgramProgressStore((state) => state.setNextWorkout);
   const history = useWorkoutHistoryStore((state) => state.workouts);
+  const historyHydrated = useWorkoutHistoryStore((state) => state.hydrated);
   const [switchModalVisible, setSwitchModalVisible] = useState(false);
   const [switchModalMode, setSwitchModalMode] = useState<'switch' | 'start'>('switch');
+
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  const entryFadeAnim = useRef(new Animated.Value(0)).current;
+  const entrySlideAnim = useRef(new Animated.Value(8)).current;
 
   // Focus synchronization
   useFocusEffect(
@@ -239,7 +249,62 @@ export default function Home() {
     ? `${greetingPrefix}, ${userGreetingName}`
     : greetingPrefix;
 
-  if (!program || !program.workouts || program.workouts.length === 0 || !nextWorkout) {
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(entryFadeAnim, {
+        toValue: 1,
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(entrySlideAnim, {
+        toValue: 0,
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [homeState, entryFadeAnim, entrySlideAnim]);
+
+  useEffect(() => {
+    if (homeState !== 'IN_PROGRESS') return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.45,
+          duration: 850,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 850,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [homeState, pulseAnim]);
+
+  useEffect(() => {
+    const targetPct = inProgressData?.percent ?? 0;
+    Animated.spring(progressAnim, {
+      toValue: targetPct,
+      useNativeDriver: false,
+      speed: 16,
+      bounciness: 5,
+    }).start();
+  }, [inProgressData?.percent, progressAnim]);
+
+  const animatedProgressWidth = progressAnim.interpolate({
+    inputRange: [0, 100],
+    outputRange: ['0%', '100%'],
+    extrapolate: 'clamp',
+  });
+
+  if (!programHydrated || (!historyHydrated && history.length === 0) || !program || !program.workouts || program.workouts.length === 0 || !nextWorkout) {
     return (
       <Screen style={styles.screenContent}>
         <View style={styles.header}>
@@ -247,6 +312,7 @@ export default function Home() {
             {greetingText}
           </Text>
         </View>
+        <HomeSkeleton />
       </Screen>
     );
   }
@@ -421,11 +487,23 @@ export default function Home() {
 
       {/* STATE B: Workout in Progress */}
       {homeState === 'IN_PROGRESS' && inProgressData && (
-        <>
+        <Animated.View
+          style={{
+            opacity: entryFadeAnim,
+            transform: [{ translateY: entrySlideAnim }],
+          }}
+        >
           <View style={styles.stateCard}>
             <View style={styles.stateCardHeaderRow}>
               <View style={styles.inProgressBadge}>
-                <View style={styles.pulseDot} />
+                <Animated.View
+                  style={[
+                    styles.pulseDot,
+                    {
+                      transform: [{ scale: pulseAnim }],
+                    },
+                  ]}
+                />
                 <Text style={styles.inProgressBadgeText}>{t('workoutInProgress')}</Text>
               </View>
               <Text style={styles.progressCounterText}>{inProgressData.percent}%</Text>
@@ -439,7 +517,7 @@ export default function Home() {
 
             {/* Progress Bar Track */}
             <View style={styles.progressBarTrack}>
-              <View style={[styles.progressBarFill, { width: `${inProgressData.percent}%` }]} />
+              <Animated.View style={[styles.progressBarFill, { width: animatedProgressWidth }]} />
             </View>
 
             {/* Current Active Exercise Info */}
@@ -492,7 +570,7 @@ export default function Home() {
               {language === 'uk' ? 'Швидкий запис списком' : 'Switch to Quick Log'}
             </Text>
           </Pressable>
-        </>
+        </Animated.View>
       )}
 
       {/* STATE C: Workout Completed Today */}
@@ -501,7 +579,7 @@ export default function Home() {
           <View style={styles.stateCard}>
             <View style={styles.stateCardHeaderRow}>
               <View style={styles.completedBadge}>
-                <Ionicons name="checkmark-circle" size={15} color={colors.primary} />
+                <Ionicons name="checkmark-circle" size={15} color={colors.primaryText} />
                 <Text style={styles.completedBadgeText}>{t('workoutCompletedToday')}</Text>
               </View>
             </View>
@@ -699,7 +777,7 @@ export default function Home() {
                         </Text>
                       </View>
                     ) : isSelected ? (
-                      <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
+                      <Ionicons name="checkmark-circle" size={22} color={colors.primaryText} />
                     ) : (
                       <Ionicons name="chevron-forward" size={18} color="#6C7685" />
                     )}
@@ -714,7 +792,7 @@ export default function Home() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   screenContent: {
     paddingTop: 6,
     paddingHorizontal: 24,
@@ -731,13 +809,13 @@ const styles = StyleSheet.create({
     fontSize: 22,
     lineHeight: 28,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: colors.text,
     letterSpacing: -0.3,
   },
   headerSubtitle: {
     fontSize: 13,
     lineHeight: 18,
-    color: '#8E959F',
+    color: colors.secondary,
     marginTop: 2,
     fontWeight: '500',
   },
@@ -745,7 +823,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    backgroundColor: colors.isDark ? 'rgba(245, 158, 11, 0.1)' : 'rgba(217, 119, 6, 0.10)',
     borderWidth: 1,
     borderColor: 'rgba(245, 158, 11, 0.3)',
     borderRadius: 14,
@@ -757,18 +835,19 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     fontWeight: '600',
-    color: '#FDE68A',
+    color: colors.isDark ? '#FDE68A' : colors.warning,
   },
   workoutCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 20,
     marginBottom: 14,
+    ...cardElevation(colors),
   },
   workoutCardLabel: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#7D8796',
+    color: colors.secondary,
   },
   workoutCardHeaderRow: {
     flexDirection: 'row',
@@ -780,7 +859,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#1D232C',
+    backgroundColor: colors.elevated,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
@@ -788,13 +867,13 @@ const styles = StyleSheet.create({
   switchWorkoutBtnText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#A0A8B4',
+    color: colors.secondary,
   },
   exercisePreviewWrap: {
     marginTop: 14,
     paddingTop: 4,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+    borderTopColor: colors.divider,
   },
   previewExRow: {
     flexDirection: 'row',
@@ -804,31 +883,31 @@ const styles = StyleSheet.create({
   },
   previewExRowBorder: {
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.04)',
+    borderTopColor: colors.divider,
   },
   previewExIndex: {
     width: 20,
     fontSize: 12,
     fontWeight: '600',
-    color: '#5C6574',
+    color: colors.muted,
     fontVariant: ['tabular-nums'],
   },
   previewExName: {
     flex: 1,
     fontSize: 14,
     fontWeight: '500',
-    color: '#E5E9F0',
+    color: colors.text,
   },
   previewExSets: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#8E959F',
+    color: colors.secondary,
     fontVariant: ['tabular-nums'],
   },
   previewMoreText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#7D8796',
+    color: colors.secondary,
     marginTop: 4,
     paddingLeft: 30,
   },
@@ -840,29 +919,31 @@ const styles = StyleSheet.create({
   workoutName: {
     fontSize: 23,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: colors.text,
     letterSpacing: -0.4,
   },
   workoutMuscles: {
     fontSize: 13,
-    color: '#8E959F',
+    color: colors.secondary,
     marginTop: 4,
     fontWeight: '500',
+    fontVariant: ['tabular-nums'],
   },
   ctaButton: {
     width: '100%',
     minHeight: 54,
     borderRadius: 16,
-    backgroundColor: '#C8FF3D',
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
   },
   weekSection: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 18,
     marginBottom: 24,
+    ...cardElevation(colors),
   },
   weekHeader: {
     flexDirection: 'row',
@@ -873,12 +954,12 @@ const styles = StyleSheet.create({
   weekLabel: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#8E959F',
+    color: colors.secondary,
   },
   weekCounter: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#E5E9F0',
+    color: colors.text,
     fontVariant: ['tabular-nums'],
   },
   weekRow: {
@@ -901,7 +982,7 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#C8FF3D',
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -910,7 +991,7 @@ const styles = StyleSheet.create({
     height: 28,
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    borderColor: colors.text,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -918,25 +999,25 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.text,
   },
   indicatorFuture: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#272E38',
+    backgroundColor: colors.elevated,
   },
   weekDayLabel: {
     fontSize: 11,
     fontWeight: '500',
-    color: '#6C7685',
+    color: colors.muted,
   },
   weekDayLabelToday: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
   },
   weekDayLabelCompleted: {
-    color: '#D8DEE9',
+    color: colors.text,
     fontWeight: '600',
   },
   modalOverlay: {
@@ -949,7 +1030,7 @@ const styles = StyleSheet.create({
   modalContent: {
     width: '100%',
     maxWidth: 380,
-    backgroundColor: '#15191F',
+    backgroundColor: colors.surface,
     borderRadius: 22,
     padding: 20,
   },
@@ -960,12 +1041,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: colors.divider,
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: colors.text,
     letterSpacing: -0.3,
   },
   modalCloseBtn: {
@@ -977,11 +1058,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 14,
     borderRadius: 14,
-    backgroundColor: '#1A1F27',
+    backgroundColor: colors.elevated,
     marginBottom: 8,
   },
   switchItemActive: {
-    backgroundColor: '#222934',
+    backgroundColor: colors.elevated,
   },
   switchItemLeft: {
     flexDirection: 'row',
@@ -994,39 +1075,40 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 8,
-    backgroundColor: '#262D38',
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
   switchItemBadgeActive: {
-    backgroundColor: '#C8FF3D',
+    backgroundColor: colors.activeChipBg,
   },
   switchItemBadgeText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#8E959F',
+    color: colors.secondary,
   },
   switchItemBadgeTextActive: {
-    color: '#0B0D0F',
+    color: colors.activeChipText,
   },
   switchItemName: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: colors.text,
   },
   switchItemNameActive: {
     fontWeight: '700',
   },
   switchItemMuscles: {
     fontSize: 12,
-    color: '#8E959F',
+    color: colors.secondary,
     marginTop: 2,
   },
   stateCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 20,
     marginBottom: 14,
+    ...cardElevation(colors),
   },
   stateCardHeaderRow: {
     flexDirection: 'row',
@@ -1043,23 +1125,23 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 3.5,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.accentLine,
   },
   inProgressBadgeText: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.primary,
+    color: colors.primaryText,
   },
   progressCounterText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: colors.text,
     fontVariant: ['tabular-nums'],
   },
   progressBarTrack: {
     height: 4,
     width: '100%',
-    backgroundColor: '#222831',
+    backgroundColor: colors.elevated,
     borderRadius: 2,
     overflow: 'hidden',
     marginTop: 14,
@@ -1067,25 +1149,25 @@ const styles = StyleSheet.create({
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: colors.primary,
+    backgroundColor: colors.accentLine,
     borderRadius: 2,
   },
   currentExBox: {
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+    borderTopColor: colors.divider,
   },
   currentExKicker: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#7D8796',
+    color: colors.secondary,
     marginBottom: 4,
   },
   currentExName: {
     flex: 1,
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: colors.text,
     marginRight: 10,
   },
   currentExDetailsRow: {
@@ -1095,7 +1177,7 @@ const styles = StyleSheet.create({
   },
   currentExTarget: {
     fontSize: 14,
-    color: '#D8DEE9',
+    color: colors.text,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
@@ -1107,11 +1189,11 @@ const styles = StyleSheet.create({
   completedBadgeText: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.primary,
+    color: colors.primaryText,
   },
   completedSubtitle: {
     fontSize: 13,
-    color: '#8E959F',
+    color: colors.secondary,
     fontWeight: '400',
     marginTop: 4,
     marginBottom: 16,
@@ -1122,7 +1204,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingTop: 14,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+    borderTopColor: colors.divider,
   },
   completedStatItem: {
     flex: 1,
@@ -1132,18 +1214,18 @@ const styles = StyleSheet.create({
   completedStatVal: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: colors.text,
     fontVariant: ['tabular-nums'],
   },
   completedStatLbl: {
     fontSize: 11,
     fontWeight: '500',
-    color: '#7D8796',
+    color: colors.secondary,
   },
   statDivider: {
     width: 1,
     height: 26,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: colors.divider,
   },
   btnContentRow: {
     flexDirection: 'row',
@@ -1153,16 +1235,17 @@ const styles = StyleSheet.create({
   ctaButtonText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#0B0D0F',
+    color: colors.onPrimary,
     letterSpacing: 0.2,
     includeFontPadding: false,
     lineHeight: 20,
   },
   nextUpCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 18,
     marginBottom: 16,
+    ...cardElevation(colors),
   },
   nextUpHeaderRow: {
     flexDirection: 'row',
@@ -1173,12 +1256,12 @@ const styles = StyleSheet.create({
   nextUpKickerText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#7D8796',
+    color: colors.secondary,
   },
   nextUpDayText: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#7D8796',
+    color: colors.secondary,
   },
   nextUpTitleRow: {
     flexDirection: 'row',
@@ -1189,18 +1272,18 @@ const styles = StyleSheet.create({
   nextUpWorkoutName: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: colors.text,
     letterSpacing: -0.3,
     flex: 1,
   },
   nextUpMuscles: {
     fontSize: 13,
-    color: '#8E959F',
+    color: colors.secondary,
     fontWeight: '500',
   },
   modalSubtitle: {
     fontSize: 12,
-    color: '#8E959F',
+    color: colors.secondary,
     fontWeight: '500',
     marginTop: 3,
   },
@@ -1215,7 +1298,7 @@ const styles = StyleSheet.create({
   switchItemStartBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#0B0D0F',
+    color: colors.onPrimary,
     letterSpacing: 0.4,
   },
   quickLogSecondaryBtn: {
@@ -1234,6 +1317,6 @@ const styles = StyleSheet.create({
   quickLogSecondaryBtnText: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#8E959F',
+    color: colors.secondary,
   },
 });

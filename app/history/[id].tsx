@@ -1,6 +1,6 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Image,
@@ -10,33 +10,40 @@ import {
   Share,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '@/components/ui/Button';
-import { colors } from '@/constants/colors';
+import { useThemeColors, type ThemeColors } from '@/constants/colors';
 import { getExerciseImage } from '@/lib/exerciseImages';
-import { hapticLight, hapticMedium } from '@/lib/haptics';
+import { hapticLight, hapticMedium, hapticSuccess } from '@/lib/haptics';
 import { useI18n } from '@/lib/i18n';
 import { formatVolume } from '@/lib/progressCalculator';
 import { formatWeight, useWeightUnit } from '@/lib/weightUtils';
 import { useExerciseNotesStore } from '@/store/exerciseNotesStore';
 import { useWorkoutHistoryStore } from '@/store/workoutHistoryStore';
 import { ExerciseDetailModal } from '@/components/program/ExerciseDetailModal';
+import type { CompletedExercise, SetType } from '@/types/workout';
 
 // Temporary feature flag: hide Instagram Stories sharing
 const SHOW_INSTAGRAM_STORIES = false;
 
 export default function HistoryDetail() {
+  const colors = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { t, tm, te, tw, language } = useI18n();
-  const { formatWithUnit } = useWeightUnit();
+  const { formatWithUnit, fromKg, toKg, unitLabel } = useWeightUnit();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const workouts = useWorkoutHistoryStore((state) => state.workouts);
   const loadHistory = useWorkoutHistoryStore((state) => state.loadHistory);
+  const updateWorkout = useWorkoutHistoryStore((state) => state.updateWorkout);
   const notes = useExerciseNotesStore((state) => state.notes);
   const loadNotes = useExerciseNotesStore((state) => state.loadNotes);
   const [isStoriesModalVisible, setIsStoriesModalVisible] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftExercises, setDraftExercises] = useState<CompletedExercise[]>([]);
   const [selectedGuideExercise, setSelectedGuideExercise] = useState<{
     name: string;
     muscleGroup?: string;
@@ -60,7 +67,7 @@ export default function HistoryDetail() {
             onPress={() => (router.canGoBack() ? router.back() : router.replace('/history'))}
             style={styles.topBackBtn}
           >
-            <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+            <Ionicons name="chevron-back" size={24} color={colors.text} />
           </Pressable>
           <Text style={styles.topBarTitle}>{t('workoutHistory')}</Text>
           <View style={{ width: 40 }} />
@@ -117,6 +124,116 @@ export default function HistoryDetail() {
     }
   };
 
+  const handleStartEditing = () => {
+    hapticMedium();
+    setDraftExercises(JSON.parse(JSON.stringify(workout.exercises)));
+    setIsEditing(true);
+  };
+
+  const handleCancelEditing = () => {
+    hapticLight();
+    setIsEditing(false);
+    setDraftExercises([]);
+  };
+
+  const handleSaveEditing = async () => {
+    hapticSuccess();
+    await updateWorkout({
+      ...workout,
+      exercises: draftExercises,
+    });
+    setIsEditing(false);
+  };
+
+  const handleCycleDraftSetType = (exIdx: number, setIdx: number) => {
+    hapticLight();
+    const order: SetType[] = ['normal', 'warmup', 'dropset', 'failure'];
+    setDraftExercises((prev) =>
+      prev.map((ex, i) => {
+        if (i !== exIdx) return ex;
+        return {
+          ...ex,
+          sets: ex.sets.map((s, j) => {
+            if (j !== setIdx) return s;
+            const curr: SetType = s.setType ?? 'normal';
+            const next = order[(order.indexOf(curr) + 1) % order.length];
+            return { ...s, setType: next };
+          }),
+        };
+      })
+    );
+  };
+
+  const handleUpdateDraftSet = (
+    exIdx: number,
+    setIdx: number,
+    patch: { weightKg?: number; reps?: number }
+  ) => {
+    setDraftExercises((prev) =>
+      prev.map((ex, i) => {
+        if (i !== exIdx) return ex;
+        return {
+          ...ex,
+          sets: ex.sets.map((s, j) => {
+            if (j !== setIdx) return s;
+            const nextWeight =
+              patch.weightKg !== undefined
+                ? Math.max(0, Math.round(patch.weightKg * 100) / 100)
+                : s.weight;
+            const nextReps =
+              patch.reps !== undefined ? Math.max(1, Math.round(patch.reps)) : s.reps;
+            return {
+              ...s,
+              weight: nextWeight,
+              reps: nextReps,
+              volume: s.setType === 'warmup' ? 0 : Math.round(nextWeight * nextReps * 100) / 100,
+            };
+          }),
+        };
+      })
+    );
+  };
+
+  const handleAddDraftSet = (exIdx: number) => {
+    hapticLight();
+    setDraftExercises((prev) =>
+      prev.map((ex, i) => {
+        if (i !== exIdx) return ex;
+        const last = ex.sets[ex.sets.length - 1];
+        const weight = last?.weight ?? 20;
+        const reps = last?.reps ?? 10;
+        return {
+          ...ex,
+          sets: [
+            ...ex.sets,
+            {
+              weight,
+              reps,
+              volume: Math.round(weight * reps * 100) / 100,
+              completedAt: new Date().toISOString(),
+              setType: 'normal',
+            },
+          ],
+        };
+      })
+    );
+  };
+
+  const handleRemoveDraftSet = (exIdx: number, setIdx: number) => {
+    hapticMedium();
+    setDraftExercises((prev) =>
+      prev.map((ex, i) => {
+        if (i !== exIdx || ex.sets.length <= 1) return ex;
+        return {
+          ...ex,
+          sets: ex.sets.filter((_, j) => j !== setIdx),
+        };
+      })
+    );
+  };
+
+  const displayedExercises = isEditing ? draftExercises : workout.exercises;
+
   return (
     <SafeAreaView style={styles.safe}>
       {/* 1. Header Bar */}
@@ -128,22 +245,51 @@ export default function HistoryDetail() {
           onPress={() => (router.canGoBack() ? router.back() : router.replace('/history'))}
           style={styles.topBackBtn}
         >
-          <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
 
         <Text style={styles.topBarTitle} numberOfLines={1}>
-          {language === 'uk' ? 'САМЕРІ ТРЕНУВАННЯ' : 'WORKOUT SUMMARY'}
+          {isEditing
+            ? language === 'uk'
+              ? 'РЕДАГУВАННЯ ЗАПИСУ'
+              : 'EDITING WORKOUT'
+            : language === 'uk'
+              ? 'САМЕРІ ТРЕНУВАННЯ'
+              : 'WORKOUT SUMMARY'}
         </Text>
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Share workout summary"
-          hitSlop={12}
-          onPress={handleNativeShare}
-          style={styles.topShareBtn}
-        >
-          <Ionicons name="share-social-outline" size={22} color={colors.primary} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={isEditing ? 'Save workout edits' : 'Edit workout'}
+            hitSlop={10}
+            onPress={isEditing ? handleSaveEditing : handleStartEditing}
+            style={[
+              styles.topShareBtn,
+              isEditing && {
+                backgroundColor: colors.primary,
+                borderColor: colors.primary,
+              },
+            ]}
+          >
+            <Ionicons
+              name={isEditing ? 'checkmark' : 'create-outline'}
+              size={20}
+              color={isEditing ? colors.onPrimary : colors.primaryText}
+            />
+          </Pressable>
+          {!isEditing && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Share workout summary"
+              hitSlop={10}
+              onPress={handleNativeShare}
+              style={styles.topShareBtn}
+            >
+              <Ionicons name="share-social-outline" size={20} color={colors.primaryText} />
+            </Pressable>
+          )}
+        </View>
       </View>
 
       <ScrollView
@@ -164,7 +310,7 @@ export default function HistoryDetail() {
             <Ionicons
               name={workout.isPartial ? 'time-outline' : 'checkmark-circle'}
               size={16}
-              color={workout.isPartial ? '#F59E0B' : colors.primary}
+              color={workout.isPartial ? '#F59E0B' : colors.primaryText}
             />
             <Text
               style={[
@@ -275,13 +421,119 @@ export default function HistoryDetail() {
           </Pressable>
         )}
 
-        {/* 7. Exercises Breakdown */}
-        <Text style={styles.sectionTitle}>{t('exercises').toUpperCase()}</Text>
-        {workout.exercises.map((exercise) => {
+        {/* 7. Exercises Breakdown Header + Edit Mode Toggle */}
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 12,
+          }}
+        >
+          <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>
+            {t('exercises').toUpperCase()}
+          </Text>
+          {isEditing ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={handleCancelEditing}
+                style={{
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  borderRadius: 10,
+                  backgroundColor: colors.elevated,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              >
+                <Text style={{ color: colors.secondary, fontSize: 12, fontWeight: '700' }}>
+                  {language === 'uk' ? 'Скасувати' : 'Cancel'}
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={handleSaveEditing}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  borderRadius: 10,
+                  backgroundColor: colors.primary,
+                }}
+              >
+                <Ionicons name="checkmark" size={14} color={colors.onPrimary} />
+                <Text style={{ color: colors.onPrimary, fontSize: 12, fontWeight: '800' }}>
+                  {language === 'uk' ? 'Зберегти' : 'Save'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              onPress={handleStartEditing}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 5,
+                paddingHorizontal: 10,
+                paddingVertical: 5,
+                borderRadius: 10,
+                backgroundColor: colors.surface,
+                borderWidth: 1,
+                borderColor: colors.border,
+              }}
+            >
+              <Ionicons name="create-outline" size={14} color={colors.primaryText} />
+              <Text style={{ color: colors.primaryText, fontSize: 11.5, fontWeight: '800' }}>
+                {language === 'uk' ? 'Редагувати підходи' : 'Edit sets'}
+              </Text>
+            </Pressable>
+          )}
+        </View>
+
+        {isEditing && (
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+              backgroundColor: colors.primaryMuted,
+              borderWidth: 1,
+              borderColor: colors.accentLine,
+              borderRadius: 12,
+              paddingHorizontal: 12,
+              paddingVertical: 9,
+              marginBottom: 12,
+            }}
+          >
+            <Ionicons name="information-circle-outline" size={16} color={colors.primaryText} />
+            <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600', flex: 1 }}>
+              {language === 'uk'
+                ? 'Змініть вагу чи повторення або натисніть на мітку сету (1/W/D/F). Рекорди та тоннаж перерахуються автоматично.'
+                : 'Adjust weight or reps, or tap the set badge (1/W/D/F). PRs and volume will recalculate automatically.'}
+            </Text>
+          </View>
+        )}
+
+        {displayedExercises.map((exercise, exIdx) => {
           const savedNote = notes[exercise.exerciseName.trim().toLowerCase()] || '';
-          const bestWeight = Math.max(0, ...exercise.sets.map((s) => s.weight));
+          const bestWeight = Math.max(
+            0,
+            ...exercise.sets.filter((s) => s.setType !== 'warmup').map((s) => s.weight)
+          );
+          const isSupersetA1 = Boolean(
+            exercise.supersetWithNext && exIdx < displayedExercises.length - 1
+          );
+          const isSupersetA2 = Boolean(
+            exIdx > 0 && displayedExercises[exIdx - 1]?.supersetWithNext
+          );
+          let workingSetCounter = 0;
+
           return (
-            <View key={exercise.exerciseId} style={styles.exerciseCard}>
+            <View key={exercise.exerciseId || exIdx} style={styles.exerciseCard}>
               <Pressable
                 accessibilityRole="button"
                 onPress={() => {
@@ -302,23 +554,51 @@ export default function HistoryDetail() {
                 </View>
                 <View style={styles.exerciseHeaderInfo}>
                   <Text style={styles.exerciseName}>{te(exercise.exerciseName)}</Text>
-                  <Text style={styles.muscle}>{tm(exercise.muscleGroup)}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                    <Text style={styles.muscle}>{tm(exercise.muscleGroup)}</Text>
+                    {(isSupersetA1 || isSupersetA2) && (
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 3,
+                          backgroundColor: 'rgba(168, 85, 247, 0.16)',
+                          borderWidth: 1,
+                          borderColor: 'rgba(168, 85, 247, 0.35)',
+                          paddingHorizontal: 6,
+                          paddingVertical: 1.5,
+                          borderRadius: 6,
+                        }}
+                      >
+                        <Ionicons name="link" size={10} color="#A855F7" />
+                        <Text style={{ color: '#A855F7', fontSize: 9.5, fontWeight: '800' }}>
+                          {isSupersetA1
+                            ? language === 'uk'
+                              ? 'СУПЕРСЕТ A1'
+                              : 'SUPERSET A1'
+                            : language === 'uk'
+                              ? 'СУПЕРСЕТ A2'
+                              : 'SUPERSET A2'}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
                 </View>
                 <View
                   style={{
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 4,
-                    backgroundColor: 'rgba(200, 255, 61, 0.08)',
+                    backgroundColor: colors.primaryMuted,
                     borderWidth: 1,
-                    borderColor: 'rgba(200, 255, 61, 0.22)',
+                    borderColor: colors.accentLine,
                     borderRadius: 8,
                     paddingHorizontal: 8,
                     paddingVertical: 4,
                   }}
                 >
-                  <Ionicons name="play-circle-outline" size={13} color={colors.primary} />
-                  <Text style={{ color: colors.primary, fontSize: 10, fontWeight: '800' }}>
+                  <Ionicons name="play-circle-outline" size={13} color={colors.primaryText} />
+                  <Text style={{ color: colors.primaryText, fontSize: 10, fontWeight: '800' }}>
                     {language === 'uk' ? 'Техніка' : 'Guide'}
                   </Text>
                 </View>
@@ -330,31 +610,271 @@ export default function HistoryDetail() {
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 6,
-                    backgroundColor: 'rgba(200, 255, 61, 0.07)',
+                    backgroundColor: colors.primaryMuted,
                     borderWidth: 1,
-                    borderColor: 'rgba(200, 255, 61, 0.2)',
+                    borderColor: colors.border,
                     borderRadius: 10,
                     paddingHorizontal: 10,
                     paddingVertical: 6,
                     marginBottom: 8,
                   }}
                 >
-                  <Ionicons name="bookmark" size={13} color={colors.primary} />
-                  <Text style={{ color: '#E2E8F0', fontSize: 12, fontWeight: '600', flex: 1 }}>
+                  <Ionicons name="bookmark" size={13} color={colors.primaryText} />
+                  <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600', flex: 1 }}>
                     {savedNote}
                   </Text>
                 </View>
               ) : null}
 
               {exercise.sets.map((set, index) => {
-                const isTopSet = set.weight > 0 && set.weight === bestWeight && index === 0;
+                const setType = set.setType ?? 'normal';
+                if (setType !== 'warmup') {
+                  workingSetCounter += 1;
+                }
+                const isTopSet =
+                  setType !== 'warmup' && set.weight > 0 && set.weight === bestWeight && index === 0;
+                const badgeText =
+                  setType === 'warmup'
+                    ? language === 'uk'
+                      ? 'W • Розігрів'
+                      : 'W • Warmup'
+                    : setType === 'dropset'
+                      ? `${t('set')} ${workingSetCounter} • D`
+                      : setType === 'failure'
+                        ? `${t('set')} ${workingSetCounter} • F`
+                        : `${t('set')} ${workingSetCounter}`;
+                const shortBadge =
+                  setType === 'warmup'
+                    ? 'W'
+                    : setType === 'dropset'
+                      ? 'D'
+                      : setType === 'failure'
+                        ? 'F'
+                        : String(workingSetCounter);
+                const badgeColor =
+                  setType === 'warmup'
+                    ? '#F59E0B'
+                    : setType === 'dropset'
+                      ? '#A855F7'
+                      : setType === 'failure'
+                        ? '#EF4444'
+                        : undefined;
+
+                if (isEditing) {
+                  const displayWeight = formatWeight(fromKg(set.weight));
+                  return (
+                    <View
+                      key={`${exercise.exerciseId}-edit-${index}`}
+                      style={[
+                        styles.setRow,
+                        { justifyContent: 'space-between', gap: 8 },
+                      ]}
+                    >
+                      {/* Set Type Cycle Button */}
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => handleCycleDraftSetType(exIdx, index)}
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 9,
+                          backgroundColor: badgeColor
+                            ? `${badgeColor}22`
+                            : colors.elevated,
+                          borderWidth: 1,
+                          borderColor: badgeColor || colors.border,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: badgeColor || colors.text,
+                            fontSize: 12,
+                            fontWeight: '900',
+                          }}
+                        >
+                          {shortBadge}
+                        </Text>
+                      </Pressable>
+
+                      {/* Weight Input Control */}
+                      <View
+                        style={{
+                          flex: 1,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          backgroundColor: colors.elevated,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                          height: 36,
+                          paddingHorizontal: 4,
+                        }}
+                      >
+                        <Pressable
+                          onPress={() => {
+                            hapticLight();
+                            const stepKg = unitLabel === 'lbs' ? toKg(5) : 2.5;
+                            handleUpdateDraftSet(exIdx, index, {
+                              weightKg: Math.max(0, set.weight - stepKg),
+                            });
+                          }}
+                          style={{
+                            width: 26,
+                            height: 28,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Text style={{ color: colors.secondary, fontSize: 15, fontWeight: '800' }}>
+                            -
+                          </Text>
+                        </Pressable>
+                        <TextInput
+                          value={String(displayWeight)}
+                          onChangeText={(txt) => {
+                            const num = parseFloat(txt.replace(',', '.'));
+                            if (!isNaN(num) && num >= 0) {
+                              handleUpdateDraftSet(exIdx, index, { weightKg: toKg(num) });
+                            } else if (txt === '') {
+                              handleUpdateDraftSet(exIdx, index, { weightKg: 0 });
+                            }
+                          }}
+                          keyboardType="decimal-pad"
+                          style={{
+                            flex: 1,
+                            color: colors.text,
+                            fontSize: 13.5,
+                            fontWeight: '800',
+                            textAlign: 'center',
+                            paddingVertical: 0,
+                          }}
+                        />
+                        <Text style={{ color: colors.muted, fontSize: 10, fontWeight: '700', marginRight: 2 }}>
+                          {unitLabel}
+                        </Text>
+                        <Pressable
+                          onPress={() => {
+                            hapticLight();
+                            const stepKg = unitLabel === 'lbs' ? toKg(5) : 2.5;
+                            handleUpdateDraftSet(exIdx, index, {
+                              weightKg: set.weight + stepKg,
+                            });
+                          }}
+                          style={{
+                            width: 26,
+                            height: 28,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Text style={{ color: colors.secondary, fontSize: 15, fontWeight: '800' }}>
+                            +
+                          </Text>
+                        </Pressable>
+                      </View>
+
+                      {/* Reps Input Control */}
+                      <View
+                        style={{
+                          flex: 0.85,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          backgroundColor: colors.elevated,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                          height: 36,
+                          paddingHorizontal: 4,
+                        }}
+                      >
+                        <Pressable
+                          onPress={() => {
+                            hapticLight();
+                            handleUpdateDraftSet(exIdx, index, {
+                              reps: Math.max(1, set.reps - 1),
+                            });
+                          }}
+                          style={{
+                            width: 24,
+                            height: 28,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Text style={{ color: colors.secondary, fontSize: 15, fontWeight: '800' }}>
+                            -
+                          </Text>
+                        </Pressable>
+                        <TextInput
+                          value={String(set.reps)}
+                          onChangeText={(txt) => {
+                            const num = parseInt(txt, 10);
+                            if (!isNaN(num) && num >= 1) {
+                              handleUpdateDraftSet(exIdx, index, { reps: num });
+                            }
+                          }}
+                          keyboardType="number-pad"
+                          style={{
+                            flex: 1,
+                            color: colors.text,
+                            fontSize: 13.5,
+                            fontWeight: '800',
+                            textAlign: 'center',
+                            paddingVertical: 0,
+                          }}
+                        />
+                        <Pressable
+                          onPress={() => {
+                            hapticLight();
+                            handleUpdateDraftSet(exIdx, index, {
+                              reps: set.reps + 1,
+                            });
+                          }}
+                          style={{
+                            width: 24,
+                            height: 28,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Text style={{ color: colors.secondary, fontSize: 15, fontWeight: '800' }}>
+                            +
+                          </Text>
+                        </Pressable>
+                      </View>
+
+                      {/* Remove Set Button */}
+                      <Pressable
+                        disabled={exercise.sets.length <= 1}
+                        onPress={() => handleRemoveDraftSet(exIdx, index)}
+                        style={{
+                          width: 30,
+                          height: 34,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          opacity: exercise.sets.length <= 1 ? 0.25 : 1,
+                        }}
+                      >
+                        <Ionicons name="close-circle-outline" size={18} color="#EF4444" />
+                      </Pressable>
+                    </View>
+                  );
+                }
+
                 return (
                   <View
                     key={`${exercise.exerciseId}-${set.completedAt || index}-${index}`}
                     style={styles.setRow}
                   >
-                    <Text style={styles.setLabel}>
-                      {t('set')} {index + 1}
+                    <Text
+                      style={[
+                        styles.setLabel,
+                        badgeColor ? { color: badgeColor, fontWeight: '800' } : null,
+                      ]}
+                    >
+                      {badgeText}
                     </Text>
                     <Text style={styles.setValue}>
                       {set.weight ? formatWithUnit(set.weight) : t('bodyweight')} × {set.reps}{' '}
@@ -363,13 +883,37 @@ export default function HistoryDetail() {
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                       <Ionicons
                         name="checkmark-circle"
-                        size={15}
-                        color={isTopSet ? colors.primary : '#64748B'}
+                        size={16}
+                        color={colors.primaryText}
                       />
                     </View>
                   </View>
                 );
               })}
+
+              {isEditing && (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => handleAddDraftSet(exIdx)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    marginTop: 10,
+                    paddingVertical: 8,
+                    borderRadius: 10,
+                    backgroundColor: colors.elevated,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                  }}
+                >
+                  <Ionicons name="add" size={15} color={colors.primaryText} />
+                  <Text style={{ color: colors.primaryText, fontSize: 12, fontWeight: '800' }}>
+                    {language === 'uk' ? 'Додати підхід' : 'Add Set'}
+                  </Text>
+                </Pressable>
+              )}
             </View>
           );
         })}
@@ -585,10 +1129,10 @@ export default function HistoryDetail() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#0B0D0F',
+    backgroundColor: colors.background,
   },
   topBar: {
     flexDirection: 'row',
@@ -598,20 +1142,20 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#1A212D',
+    borderBottomColor: colors.divider,
   },
   topBackBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#15181C',
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#292E35',
+    borderColor: colors.border,
   },
   topBarTitle: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 1.2,
@@ -620,11 +1164,11 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(200, 255, 61, 0.1)',
+    backgroundColor: colors.primaryMuted,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(200, 255, 61, 0.25)',
+    borderColor: colors.accentLine,
   },
   scrollContent: {
     paddingHorizontal: 20,
@@ -639,38 +1183,38 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(200, 255, 61, 0.12)',
+    backgroundColor: colors.primaryMuted,
     borderWidth: 1,
-    borderColor: 'rgba(200, 255, 61, 0.3)',
+    borderColor: colors.accentLine,
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 5,
     marginBottom: 10,
   },
   completedBadgeText: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 1,
   },
   title: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 26,
     fontWeight: '900',
     textAlign: 'center',
   },
   workoutSubtitle: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 13,
     fontWeight: '600',
     marginTop: 4,
   },
   statsRow: {
     flexDirection: 'row',
-    backgroundColor: '#15181C',
+    backgroundColor: colors.surface,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#242C38',
+    borderColor: colors.border,
     paddingVertical: 16,
     marginBottom: 14,
   },
@@ -679,12 +1223,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   statValue: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 18,
     fontWeight: '900',
   },
   statLabel: {
-    color: '#717B8A',
+    color: colors.secondary,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.5,
@@ -693,36 +1237,36 @@ const styles = StyleSheet.create({
   statDivider: {
     width: 1,
     height: '60%',
-    backgroundColor: '#242C38',
+    backgroundColor: colors.divider,
     alignSelf: 'center',
   },
   volumeCard: {
-    backgroundColor: '#15181C',
+    backgroundColor: colors.surface,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#242C38',
+    borderColor: colors.border,
     paddingVertical: 20,
     alignItems: 'center',
     marginBottom: 14,
   },
   volumeValue: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 34,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   volumeLabel: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 1.2,
     marginTop: 4,
   },
   prsCard: {
-    backgroundColor: '#15181C',
+    backgroundColor: colors.surface,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#242C38',
+    borderColor: colors.border,
     padding: 16,
     marginBottom: 16,
   },
@@ -733,7 +1277,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   prSectionTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 1.2,
@@ -742,7 +1286,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   noPrText: {
-    color: '#8E9BAE',
+    color: colors.secondary,
     fontSize: 13,
     lineHeight: 19,
   },
@@ -753,15 +1297,15 @@ const styles = StyleSheet.create({
   },
   prRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: colors.divider,
   },
   prThumbWrap: {
     width: 36,
     height: 36,
     borderRadius: 8,
-    backgroundColor: '#0E1115',
+    backgroundColor: colors.elevated,
     borderWidth: 1,
-    borderColor: '#242C38',
+    borderColor: colors.border,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
@@ -772,13 +1316,13 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   prExerciseName: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 15,
     fontWeight: '700',
     flex: 1,
   },
   prValueText: {
-    color: '#8E9BAE',
+    color: colors.secondary,
     fontSize: 14,
     fontWeight: '700',
     marginRight: 8,
@@ -787,9 +1331,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(200, 255, 61, 0.08)',
+    backgroundColor: colors.primaryMuted,
     borderWidth: 1,
-    borderColor: 'rgba(200, 255, 61, 0.3)',
+    borderColor: colors.accentLine,
     borderRadius: 18,
     padding: 16,
     marginBottom: 24,
@@ -812,12 +1356,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   storyBannerTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 14,
     fontWeight: '800',
   },
   storyBannerSubtitle: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12,
     marginTop: 2,
   },
@@ -825,23 +1369,23 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#1E252F',
+    backgroundColor: colors.elevated,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 8,
   },
   sectionTitle: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 1.4,
     marginBottom: 12,
   },
   exerciseCard: {
-    backgroundColor: '#15181C',
+    backgroundColor: colors.surface,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#242C38',
+    borderColor: colors.border,
     padding: 16,
     marginBottom: 12,
   },
@@ -855,9 +1399,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 10,
-    backgroundColor: '#0E1115',
+    backgroundColor: colors.elevated,
     borderWidth: 1,
-    borderColor: '#242C38',
+    borderColor: colors.border,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
@@ -870,12 +1414,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   exerciseName: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 16,
     fontWeight: '800',
   },
   muscle: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -885,45 +1429,45 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderTopWidth: 1,
-    borderTopColor: '#242C38',
+    borderTopColor: colors.divider,
     paddingTop: 10,
     marginTop: 8,
   },
   setLabel: {
-    color: '#717B8A',
+    color: colors.secondary,
     fontSize: 11,
     fontWeight: '800',
     width: 52,
   },
   setValue: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 14,
     fontWeight: '700',
     flex: 1,
   },
   setVolume: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12,
   },
   emptyCard: {
-    backgroundColor: '#15181C',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#292E35',
+    borderColor: colors.border,
     padding: 24,
     alignItems: 'center',
     margin: 20,
     gap: 16,
   },
   emptyTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 18,
     fontWeight: '800',
     textAlign: 'center',
   },
   storiesModalOverlay: {
     flex: 1,
-    backgroundColor: '#0B0D0F',
+    backgroundColor: colors.background,
   },
   storiesModalHeader: {
     flexDirection: 'row',
@@ -935,7 +1479,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1A212D',
   },
   storiesModalHeaderTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 13,
     fontWeight: '900',
     letterSpacing: 1.2,
@@ -991,13 +1535,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#4B5565',
   },
   storyBrandSub: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 2,
   },
   storyDateText: {
-    color: '#6C7A8E',
+    color: colors.secondary,
     fontSize: 11,
     fontWeight: '600',
   },
@@ -1012,7 +1556,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   storyWorkoutTagText: {
-    color: '#0B0D0F',
+    color: colors.onPrimary,
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 0.8,
@@ -1021,7 +1565,7 @@ const styles = StyleSheet.create({
     marginVertical: 12,
   },
   storyHeroVolumeNum: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 40,
     fontWeight: '900',
     letterSpacing: -0.5,
@@ -1046,12 +1590,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   storyTriNum: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 17,
     fontWeight: '900',
   },
   storyTriLabel: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -1089,7 +1633,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   storyPrExerciseName: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 11,
     fontWeight: '700',
     flex: 1,
@@ -1103,7 +1647,7 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
   storyExercisesHeader: {
-    color: '#6C7A8E',
+    color: colors.secondary,
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 1,
@@ -1129,7 +1673,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+    borderTopColor: colors.divider,
   },
   storyWatermarkText: {
     color: '#5A687A',
@@ -1155,7 +1699,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   shareActionBtnText: {
-    color: '#0B0D0F',
+    color: colors.onPrimary,
     fontSize: 14,
     fontWeight: '900',
     letterSpacing: 0.8,

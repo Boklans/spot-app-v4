@@ -37,6 +37,7 @@ export type UserExperience = 'Beginner' | 'Intermediate' | 'Advanced';
 export type WeightUnit = 'kg' | 'lbs';
 export type HeightUnit = 'cm' | 'ft';
 export type AppLanguage = 'en' | 'uk';
+export type AppTheme = 'dark' | 'light';
 
 export type BaselineLifts = {
   benchPressKg?: number;
@@ -48,6 +49,7 @@ export type BaselineLifts = {
 export type UserProfile = {
   name: string;
   avatar: BeastAvatarId;
+  customAvatarUri?: string;
   age?: number;
   sex?: 'male' | 'female' | 'unspecified';
   weightKg: number;
@@ -59,6 +61,7 @@ export type UserProfile = {
   heightUnit: HeightUnit;
   defaultRestSeconds: number;
   language: AppLanguage;
+  theme: AppTheme;
   notifications: boolean;
   notificationTime: string;
   soundEnabled: boolean;
@@ -69,6 +72,7 @@ export type UserProfile = {
 export const DEFAULT_USER_PROFILE: UserProfile = {
   name: 'IHOR',
   avatar: 'gorilla',
+  customAvatarUri: undefined,
   age: 28,
   sex: 'unspecified',
   weightKg: 78,
@@ -80,6 +84,7 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
   heightUnit: 'cm',
   defaultRestSeconds: 150,
   language: 'en',
+  theme: 'dark',
   notifications: true,
   notificationTime: '09:00',
   soundEnabled: true,
@@ -127,6 +132,12 @@ function normalizeLoadedProfile(parsed: unknown): UserProfile {
   return {
     name: typeof p.name === 'string' && p.name.trim().length > 0 ? p.name.trim() : DEFAULT_USER_PROFILE.name,
     avatar: validAvatars.includes(p.avatar as BeastAvatarId) ? (p.avatar as BeastAvatarId) : DEFAULT_USER_PROFILE.avatar,
+    customAvatarUri:
+      typeof p.customAvatarUri === 'string' && p.customAvatarUri.trim().length > 0
+        ? p.customAvatarUri.trim()
+        : undefined,
+    age: typeof p.age === 'number' && p.age >= 10 && p.age <= 100 ? p.age : DEFAULT_USER_PROFILE.age,
+    sex: p.sex === 'male' || p.sex === 'female' ? p.sex : 'unspecified',
     weightKg: typeof p.weightKg === 'number' && p.weightKg >= 20 && p.weightKg <= 300 ? Math.round(p.weightKg * 10) / 10 : DEFAULT_USER_PROFILE.weightKg,
     heightCm: typeof p.heightCm === 'number' && p.heightCm >= 100 && p.heightCm <= 240 ? Math.round(p.heightCm) : DEFAULT_USER_PROFILE.heightCm,
     goal: validGoals.includes(p.goal as UserGoal) ? (p.goal as UserGoal) : DEFAULT_USER_PROFILE.goal,
@@ -139,6 +150,7 @@ function normalizeLoadedProfile(parsed: unknown): UserProfile {
     heightUnit: p.heightUnit === 'ft' ? 'ft' : 'cm',
     defaultRestSeconds: typeof p.defaultRestSeconds === 'number' ? p.defaultRestSeconds : 150,
     language: p.language === 'uk' ? 'uk' : 'en',
+    theme: p.theme === 'light' ? 'light' : 'dark',
     notifications: typeof p.notifications === 'boolean' ? p.notifications : true,
     notificationTime:
       typeof p.notificationTime === 'string' && /^\d{1,2}:\d{2}$/.test(p.notificationTime)
@@ -199,6 +211,12 @@ export const useUserProfileStore = create<UserProfileState>((set, get) => ({
         }
         if (typeof ob.heightCm === 'number' && ob.heightCm > 50 && normalized.heightCm === DEFAULT_USER_PROFILE.heightCm) {
           normalized.heightCm = Math.round(ob.heightCm);
+        }
+        if (typeof ob.age === 'number' && ob.age >= 10 && normalized.age === DEFAULT_USER_PROFILE.age) {
+          normalized.age = ob.age;
+        }
+        if ((ob.sex === 'female' || ob.sex === 'male') && (!normalized.sex || normalized.sex === 'unspecified')) {
+          normalized.sex = ob.sex;
         }
         if (ob.baselineLifts && typeof ob.baselineLifts === 'object' && !normalized.baselineLifts) {
           normalized.baselineLifts = ob.baselineLifts as BaselineLifts;
@@ -265,6 +283,8 @@ export const useUserProfileStore = create<UserProfileState>((set, get) => ({
         weightKg: updated.weightKg,
         heightCm: updated.heightCm,
         avatar: updated.avatar,
+        customAvatarUri: updated.customAvatarUri,
+        sex: updated.sex,
         baselineLifts: updated.baselineLifts,
       };
       await AsyncStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(nextOnboarding));

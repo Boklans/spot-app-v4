@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ExercisePickerModal } from '@/components/program/ExercisePickerModal';
-import { colors } from '@/constants/colors';
+import { useThemeColors, type ThemeColors } from '@/constants/colors';
 import { type LibraryExercise } from '@/lib/exerciseLibrary';
 import {
   findLatestExerciseSets,
@@ -73,6 +73,8 @@ function parseTargetReps(repRange: string): number {
 }
 
 export default function QuickLogScreen() {
+  const colors = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { t, tm, te, tw, language } = useI18n();
   const { unit, unitLabel, fromKg, toKg } = useWeightUnit();
   const { workoutId } = useLocalSearchParams<{ workoutId?: string }>();
@@ -529,7 +531,7 @@ export default function QuickLogScreen() {
             onPress={handleBack}
             style={styles.backBtn}
           >
-            <Ionicons name="arrow-back" size={22} color="#FFFFFF" />
+            <Ionicons name="arrow-back" size={22} color={colors.text} />
           </Pressable>
 
           <View style={styles.headerTitleWrap}>
@@ -545,7 +547,7 @@ export default function QuickLogScreen() {
         {/* Subtle toast message banner */}
         {bannerMessage && (
           <View style={styles.bannerToast}>
-            <Ionicons name="checkmark-circle" size={16} color={colors.primary} />
+            <Ionicons name="checkmark-circle" size={16} color={colors.primaryText} />
             <Text style={styles.bannerToastText}>{bannerMessage}</Text>
           </View>
         )}
@@ -563,7 +565,7 @@ export default function QuickLogScreen() {
               onPress={handleFillAllAsPlanned}
               style={({ pressed }) => [styles.fillAllBtn, pressed && styles.btnPressed]}
             >
-              <Ionicons name="flash" size={16} color={colors.primary} style={{ marginRight: 6 }} />
+              <Ionicons name="flash" size={16} color={colors.primaryText} style={{ marginRight: 6 }} />
               <Text style={styles.fillAllBtnText}>{t('fillAllAsPlanned')}</Text>
             </Pressable>
 
@@ -633,7 +635,7 @@ export default function QuickLogScreen() {
                       <Ionicons
                         name="checkmark"
                         size={14}
-                        color={hasCompletedSets ? colors.primary : '#94A3B8'}
+                        color={hasCompletedSets ? colors.primaryText : '#94A3B8'}
                       />
                       <Text
                         style={[
@@ -659,7 +661,7 @@ export default function QuickLogScreen() {
                         onPress={() => handleStepWeight(exIdx, -stepVal)}
                         style={styles.stepBtn}
                       >
-                        <Ionicons name="remove" size={18} color="#FFFFFF" />
+                        <Ionicons name="remove" size={18} color={colors.text} />
                       </Pressable>
 
                       <TextInput
@@ -678,7 +680,7 @@ export default function QuickLogScreen() {
                         onPress={() => handleStepWeight(exIdx, stepVal)}
                         style={styles.stepBtn}
                       >
-                        <Ionicons name="add" size={18} color="#FFFFFF" />
+                        <Ionicons name="add" size={18} color={colors.text} />
                       </Pressable>
                     </View>
                   </View>
@@ -705,7 +707,7 @@ export default function QuickLogScreen() {
                           style={styles.addSetBtn}
                           hitSlop={6}
                         >
-                          <Ionicons name="add" size={14} color="#E2E8F0" />
+                          <Ionicons name="add" size={14} color={colors.text} />
                           <Text style={styles.addSetBtnText}>{t('addSetBtn')}</Text>
                         </Pressable>
                       </View>
@@ -768,7 +770,7 @@ export default function QuickLogScreen() {
               }}
               style={({ pressed }) => [styles.addExerciseCard, pressed && styles.btnPressed]}
             >
-              <Ionicons name="add" size={18} color="#E2E8F0" />
+              <Ionicons name="add" size={18} color={colors.text} />
               <Text style={styles.addExerciseCardText}>{t('addExercise')}</Text>
             </Pressable>
           </View>
@@ -778,7 +780,7 @@ export default function QuickLogScreen() {
         <View style={styles.bottomBar}>
           <View style={styles.summaryStatsRow}>
             <View style={styles.summaryMetaItem}>
-              <Ionicons name="checkmark-done" size={15} color={colors.primary} />
+              <Ionicons name="checkmark-done" size={15} color={colors.primaryText} />
               <Text style={styles.summaryMetaText}>
                 {totalCompletedSets} {language === 'uk' ? 'підходів' : 'sets'}
               </Text>
@@ -824,10 +826,10 @@ export default function QuickLogScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#0E1114',
+    backgroundColor: colors.background,
   },
   topBar: {
     flexDirection: 'row',
@@ -837,13 +839,15 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    borderBottomColor: colors.divider,
   },
   backBtn: {
     width: 38,
     height: 38,
     borderRadius: 12,
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -852,12 +856,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerSub: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 16,
     fontWeight: '800',
   },
   headerLabel: {
-    color: '#8E9BAE',
+    color: colors.secondary,
     fontSize: 11.5,
     fontWeight: '500',
     marginTop: 1,
@@ -869,16 +873,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     paddingVertical: 10,
     paddingHorizontal: 16,
     marginHorizontal: 16,
     marginTop: 8,
     borderRadius: 12,
     gap: 8,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
   },
   bannerToastText: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 13,
     fontWeight: '600',
   },
@@ -892,21 +898,23 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   quickCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 18,
     padding: 14,
     gap: 12,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
   },
   fillAllBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.elevated,
     height: 44,
     borderRadius: 12,
   },
   fillAllBtnText: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 14,
     fontWeight: '700',
   },
@@ -925,13 +933,13 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   timeLabel: {
-    color: '#8E9BAE',
+    color: colors.secondary,
     fontSize: 11.5,
     fontWeight: '600',
   },
   whenPillsRow: {
     flexDirection: 'row',
-    backgroundColor: '#0E1114',
+    backgroundColor: colors.elevated,
     padding: 3,
     borderRadius: 11,
     gap: 4,
@@ -945,25 +953,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   whenPillActive: {
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.surface,
   },
   whenPillText: {
-    color: '#64748B',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '600',
   },
   whenPillTextActive: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
   },
   exercisesList: {
     gap: 12,
   },
   exerciseCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 18,
     padding: 16,
     gap: 14,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
   },
   cardHeaderRow: {
     flexDirection: 'row',
@@ -971,12 +981,12 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   exerciseName: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 15.5,
     fontWeight: '700',
   },
   targetInfo: {
-    color: '#8E9BAE',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '500',
     marginTop: 3,
@@ -989,18 +999,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 10,
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.elevated,
   },
   quickFillExBtnActive: {
-    backgroundColor: 'rgba(200, 255, 61, 0.14)',
+    backgroundColor: colors.primaryMuted,
   },
   quickFillExBtnText: {
-    color: '#94A3B8',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '600',
   },
   quickFillExBtnTextActive: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontWeight: '700',
   },
   weightConfigRow: {
@@ -1009,17 +1019,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: colors.divider,
   },
   fieldLabel: {
-    color: '#8E9BAE',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '600',
   },
   stepperWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.elevated,
     borderRadius: 10,
   },
   stepBtn: {
@@ -1031,7 +1041,7 @@ const styles = StyleSheet.create({
   weightInput: {
     minWidth: 52,
     height: 36,
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 15,
     fontWeight: '700',
     textAlign: 'center',
@@ -1052,11 +1062,11 @@ const styles = StyleSheet.create({
     gap: 3,
     paddingVertical: 5,
     paddingHorizontal: 9,
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.elevated,
     borderRadius: 8,
   },
   removeSetBtnText: {
-    color: '#94A3B8',
+    color: colors.secondary,
     fontSize: 11.5,
     fontWeight: '600',
   },
@@ -1066,11 +1076,11 @@ const styles = StyleSheet.create({
     gap: 3,
     paddingVertical: 5,
     paddingHorizontal: 9,
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.elevated,
     borderRadius: 8,
   },
   addSetBtnText: {
-    color: '#E2E8F0',
+    color: colors.text,
     fontSize: 11.5,
     fontWeight: '600',
   },
@@ -1082,7 +1092,7 @@ const styles = StyleSheet.create({
   setBox: {
     width: 66,
     height: 62,
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.elevated,
     borderRadius: 12,
     paddingTop: 7,
     paddingBottom: 6,
@@ -1091,19 +1101,19 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   setBoxFilled: {
-    backgroundColor: 'rgba(200, 255, 61, 0.12)',
+    backgroundColor: colors.primaryMuted,
   },
   setIndexLabel: {
-    color: '#64748B',
+    color: colors.secondary,
     fontSize: 10.5,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
   setIndexLabelFilled: {
-    color: colors.primary,
+    color: colors.primaryText,
   },
   repsInput: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 20,
     fontWeight: '800',
     textAlign: 'center',
@@ -1116,7 +1126,7 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   repsInputFilled: {
-    color: colors.primary,
+    color: colors.primaryText,
   },
   addExerciseCard: {
     flexDirection: 'row',
@@ -1124,11 +1134,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     height: 48,
     borderRadius: 14,
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     gap: 6,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
   },
   addExerciseCardText: {
-    color: '#E2E8F0',
+    color: colors.text,
     fontSize: 14,
     fontWeight: '700',
   },
@@ -1136,9 +1148,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 16,
-    backgroundColor: '#0E1114',
+    backgroundColor: colors.surface,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: colors.divider,
     gap: 10,
   },
   summaryStatsRow: {
@@ -1153,7 +1165,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   summaryMetaText: {
-    color: '#CBD5E1',
+    color: colors.text,
     fontSize: 13,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
@@ -1167,7 +1179,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   saveBtnText: {
-    color: '#0B0D0F',
+    color: colors.onPrimary,
     fontSize: 15,
     fontWeight: '800',
   },

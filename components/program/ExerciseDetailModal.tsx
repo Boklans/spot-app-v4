@@ -10,7 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { colors } from '@/constants/colors';
+import { useThemeColors, type ThemeColors } from '@/constants/colors';
 import { getExerciseDetails } from '@/lib/exerciseDetails';
 import { getExerciseImage } from '@/lib/exerciseImages';
 import { hapticLight, hapticMedium } from '@/lib/haptics';
@@ -38,6 +38,8 @@ export function ExerciseDetailModal({
   equipment,
   onConfigure,
 }: ExerciseDetailModalProps) {
+  const colors = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { te, tm, language } = useI18n();
   const { unitLabel, fromKg } = useWeightUnit();
   const isUk = language === 'uk';
@@ -310,7 +312,7 @@ export function ExerciseDetailModal({
                   pressed && { opacity: 0.8 },
                 ]}
               >
-                <Ionicons name="options-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Ionicons name="options-outline" size={18} color={colors.text} style={{ marginRight: 6 }} />
                 <Text style={styles.configureBtnText}>
                   {isUk ? 'Налаштувати' : 'Configure'}
                 </Text>
@@ -340,14 +342,14 @@ export function ExerciseDetailModal({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#0E1114',
+    backgroundColor: colors.background,
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
     height: '92%',
@@ -361,16 +363,17 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingBottom: 14,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: colors.divider,
+    backgroundColor: colors.surface,
   },
   headerKickerText: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 13,
     fontWeight: '500',
     marginBottom: 4,
   },
   headerTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 21,
     fontWeight: '700',
     letterSpacing: -0.3,
@@ -379,7 +382,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#181D24',
+    backgroundColor: colors.elevated,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 12,
@@ -394,21 +397,25 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 210,
     borderRadius: 18,
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     overflow: 'hidden',
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
   },
   heroImage: {
     width: '100%',
     height: '100%',
   },
   sectionCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 18,
     padding: 16,
     gap: 12,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
   },
   sectionHeaderTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 15,
     fontWeight: '700',
     letterSpacing: -0.2,
@@ -425,10 +432,10 @@ const styles = StyleSheet.create({
   anatomyRowDivider: {
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: colors.divider,
   },
   primaryBadgeLabel: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 13,
     fontWeight: '500',
     width: 110,
@@ -441,20 +448,20 @@ const styles = StyleSheet.create({
   },
   anatomyText: {
     flex: 1,
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 13.5,
     fontWeight: '600',
     textAlign: 'right',
   },
   anatomyTextSecondary: {
     flex: 1,
-    color: '#A0A8B4',
+    color: colors.secondary,
     fontSize: 13.5,
     fontWeight: '500',
     textAlign: 'right',
   },
   movementSummaryText: {
-    color: '#A0A8B4',
+    color: colors.secondary,
     fontSize: 13.5,
     lineHeight: 19,
     fontWeight: '400',
@@ -470,7 +477,7 @@ const styles = StyleSheet.create({
   },
   stepItemBorder: {
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: colors.divider,
   },
   stepNumberText: {
     color: '#5C6574',
@@ -487,7 +494,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   stepTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -497,7 +504,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   stepDescription: {
-    color: '#94A3B8',
+    color: colors.secondary,
     fontSize: 13,
     lineHeight: 19,
     fontWeight: '400',
@@ -514,12 +521,12 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: '#6C7685',
+    backgroundColor: colors.secondary,
     marginTop: 7,
   },
   mistakeItemText: {
     flex: 1,
-    color: '#CBD5E1',
+    color: colors.text,
     fontSize: 13,
     lineHeight: 19,
     fontWeight: '400',
@@ -530,15 +537,15 @@ const styles = StyleSheet.create({
   safetyBlockBorder: {
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: colors.divider,
   },
   safetyLabel: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '600',
   },
   safetyText: {
-    color: '#A0A8B4',
+    color: colors.secondary,
     fontSize: 13,
     lineHeight: 19,
     fontWeight: '400',
@@ -550,19 +557,19 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     marginTop: 2,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: colors.divider,
   },
   bestStatCol: {
     flex: 1,
     gap: 2,
   },
   bestStatLabel: {
-    color: '#7D8796',
+    color: colors.secondary,
     fontSize: 11.5,
     fontWeight: '500',
   },
   bestStatValue: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 15,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
@@ -570,7 +577,7 @@ const styles = StyleSheet.create({
   statDivider: {
     width: 1,
     height: 28,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: colors.divider,
     marginHorizontal: 14,
   },
   bottomBar: {
@@ -584,21 +591,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 24,
-    backgroundColor: '#0E1114',
+    backgroundColor: colors.surface,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: colors.divider,
   },
   configureBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#181D24',
+    backgroundColor: colors.elevated,
     paddingVertical: 15,
     paddingHorizontal: 18,
     borderRadius: 16,
   },
   configureBtnText: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -612,7 +619,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   gotItBtnText: {
-    color: '#0B0D0F',
+    color: colors.onPrimary,
     fontSize: 15,
     fontWeight: '700',
   },

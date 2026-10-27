@@ -1,8 +1,10 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   Dimensions,
+  Easing,
   type ScrollViewInstance,
   Pressable,
   ScrollView,
@@ -13,17 +15,20 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   RealStrengthGraph,
+  type StrengthChartMetric,
   type StrengthSessionPoint,
 } from '@/components/progress/RealStrengthGraph';
 import { BodyWeightGraph } from '@/components/progress/BodyWeightGraph';
 import { LogWeightModal } from '@/components/progress/LogWeightModal';
-import { colors } from '@/constants/colors';
+import { AnalyticsSkeleton } from '@/components/ui/Skeleton';
+import { cardElevation, useThemeColors, type ThemeColors } from '@/constants/colors';
 import { analyzeBodyAndStrength } from '@/lib/bodyCompositionAI';
 import { hapticLight } from '@/lib/haptics';
 import { useI18n } from '@/lib/i18n';
 import { getAllTimePersonalRecords } from '@/lib/personalRecords';
 import {
   calculateMuscleProgress,
+  calculateMuscleRecoveryStats,
   calculateProgressSummary,
   getAvailableExercisesForProgress,
   normalizeMuscleCategory,
@@ -41,9 +46,12 @@ const CORE_MUSCLES = ['Chest', 'Back', 'Shoulders', 'Arms', 'Legs', 'Core'];
 
 export default function Progress() {
   const { t, tm, te, language } = useI18n();
+  const colors = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { unit, unitLabel, formatVolume, fromKg } = useWeightUnit();
   const profile = useUserProfileStore((state) => state.profile);
   const history = useWorkoutHistoryStore((state) => state.workouts);
+  const historyHydrated = useWorkoutHistoryStore((state) => state.hydrated);
   const loadHistory = useWorkoutHistoryStore((state) => state.loadHistory);
   const bodyWeightEntries = useBodyWeightStore((state) => state.entries);
   const loadBodyWeightHistory = useBodyWeightStore((state) => state.loadHistory);
@@ -53,16 +61,35 @@ export default function Progress() {
   const [period, setPeriod] = useState<ProgressPeriod>('30D');
   const [activeTab, setActiveTab] = useState<ActiveViewTab>('overview');
   const [timeRange, setTimeRange] = useState<'1M' | '3M' | '6M' | 'ALL'>('1M');
+  const [chartMetric, setChartMetric] = useState<StrengthChartMetric>('weight');
   const [selectedMuscle, setSelectedMuscle] = useState('Chest');
   const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(null);
   const [periodDropdownOpen, setPeriodDropdownOpen] = useState(false);
   const [logWeightModalVisible, setLogWeightModalVisible] = useState(false);
   const scrollRef = useRef<ScrollViewInstance>(null);
   const program = useProgramStore((state) => state.program);
+  const tabFadeAnim = useRef(new Animated.Value(1)).current;
+  const tabSlideAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ y: 0, animated: false });
-  }, [activeTab]);
+    tabFadeAnim.setValue(0.35);
+    tabSlideAnim.setValue(6);
+    Animated.parallel([
+      Animated.timing(tabFadeAnim, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(tabSlideAnim, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [activeTab, period, tabFadeAnim, tabSlideAnim]);
 
   // Reload history and bodyweight entries whenever Analytics tab gains focus
   useFocusEffect(
@@ -160,10 +187,17 @@ export default function Progress() {
     };
   });
 
-  // Calculate detailed stats for selected muscle using normalized muscle categories
+  const muscleRecoveryStats = React.useMemo(
+    () => calculateMuscleRecoveryStats(history),
+    [history]
+  );
+
+  // Calculate detailed stats for selected muscle using normalized muscle categories (excluding warmup sets)
   const selectedMuscleWorkouts = periodFilteredWorkouts.filter((w) =>
     w.exercises.some(
-      (e) => normalizeMuscleCategory(e.muscleGroup).toLowerCase() === selectedMuscle.toLowerCase()
+      (e) =>
+        normalizeMuscleCategory(e.muscleGroup).toLowerCase() === selectedMuscle.toLowerCase() &&
+        e.sets.some((s) => s.setType !== 'warmup')
     )
   );
   const selectedMuscleSets = selectedMuscleWorkouts.reduce(
@@ -173,7 +207,7 @@ export default function Progress() {
         .filter(
           (e) => normalizeMuscleCategory(e.muscleGroup).toLowerCase() === selectedMuscle.toLowerCase()
         )
-        .reduce((sum, e) => sum + e.sets.length, 0),
+        .reduce((sum, e) => sum + e.sets.filter((s) => s.setType !== 'warmup').length, 0),
     0
   );
   const selectedMuscleVolume = selectedMuscleWorkouts.reduce(
@@ -183,7 +217,14 @@ export default function Progress() {
         .filter(
           (e) => normalizeMuscleCategory(e.muscleGroup).toLowerCase() === selectedMuscle.toLowerCase()
         )
-        .reduce((sum, e) => sum + e.sets.reduce((sSum, s) => sSum + s.volume, 0), 0),
+        .reduce(
+          (sum, e) =>
+            sum +
+            e.sets
+              .filter((s) => s.setType !== 'warmup')
+              .reduce((sSum, s) => sSum + s.volume, 0),
+          0
+        ),
     0
   );
 
@@ -246,7 +287,9 @@ export default function Progress() {
         return Boolean(selectedExercise.id && e.exerciseId === selectedExercise.id);
       });
 
-      const sets = ex?.sets || [];
+      const allSets = ex?.sets || [];
+      const workingSets = allSets.filter((s) => s.setType !== 'warmup');
+      const sets = workingSets.length > 0 ? workingSets : allSets;
       const isBw = sets.length > 0 && sets.every((s) => (s.weight || 0) === 0);
       let bestWeight = 0;
       let bestReps = 0;
@@ -397,7 +440,7 @@ export default function Progress() {
             }}
             style={({ pressed }) => [styles.historyHeaderBtn, pressed && { opacity: 0.7 }]}
           >
-            <Ionicons name="time-outline" size={15} color="#D8DEE9" />
+            <Ionicons name="time-outline" size={15} color={colors.text} />
             <Text style={styles.historyHeaderBtnText}>
               {language === 'uk' ? 'Журнал' : 'History'}
               {history.length > 0 ? ` (${history.length})` : ''}
@@ -526,6 +569,15 @@ export default function Progress() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
+        {!historyHydrated && history.length === 0 ? (
+          <AnalyticsSkeleton />
+        ) : (
+        <Animated.View
+          style={{
+            opacity: tabFadeAnim,
+            transform: [{ translateY: tabSlideAnim }],
+          }}
+        >
         {/* ========================================================================= */}
         {/* VIEW 1: OVERVIEW                                                          */}
         {/* ========================================================================= */}
@@ -643,6 +695,50 @@ export default function Progress() {
                     </View>
                   </View>
 
+                  {/* Metric Switcher Pills (Weight / 1RM / Volume) */}
+                  {!isSelectedExerciseBw && (
+                    <View style={styles.metricSwitcherRow}>
+                      {(
+                        [
+                          {
+                            key: 'weight' as StrengthChartMetric,
+                            label: language === 'uk' ? 'Робоча вага' : 'Max Weight',
+                          },
+                          {
+                            key: 'est1RM' as StrengthChartMetric,
+                            label: language === 'uk' ? '1RM (Еплі)' : 'Est. 1RM',
+                          },
+                          {
+                            key: 'volume' as StrengthChartMetric,
+                            label: language === 'uk' ? 'Обʼєм вправи' : 'Volume',
+                          },
+                        ] as const
+                      ).map((mItem) => (
+                        <Pressable
+                          key={mItem.key}
+                          accessibilityRole="button"
+                          onPress={() => {
+                            hapticLight();
+                            setChartMetric(mItem.key);
+                          }}
+                          style={[
+                            styles.metricSwitchPill,
+                            chartMetric === mItem.key && styles.metricSwitchPillActive,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.metricSwitchText,
+                              chartMetric === mItem.key && styles.metricSwitchTextActive,
+                            ]}
+                          >
+                            {mItem.label}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  )}
+
                   {/* Real Interactive Strength Graph or Empty State */}
                   {sessionPoints.length > 0 ? (
                     <>
@@ -651,13 +747,30 @@ export default function Progress() {
                           data={sessionPoints}
                           width={chartWidth}
                           height={165}
-                          unit={isSelectedExerciseBw ? (language === 'uk' ? 'ПОВТ' : 'REPS') : unitLabel}
+                          metric={isSelectedExerciseBw ? 'weight' : chartMetric}
+                          unit={
+                            isSelectedExerciseBw
+                              ? language === 'uk'
+                                ? 'ПОВТ'
+                                : 'REPS'
+                              : unitLabel
+                          }
                         />
                       </View>
 
                       <View style={styles.chartFooter}>
                         <Text style={styles.chartTrendPositive}>
-                          {language === 'uk' ? 'Динаміка по сесіях' : 'Progression tracked'}
+                          {chartMetric === 'est1RM'
+                            ? language === 'uk'
+                              ? 'Прогресія розрахункового 1RM'
+                              : 'Estimated 1RM trend'
+                            : chartMetric === 'volume'
+                              ? language === 'uk'
+                                ? 'Тоннаж вправи по сесіях'
+                                : 'Session exercise volume'
+                              : language === 'uk'
+                                ? 'Динаміка робочої ваги'
+                                : 'Working weight progression'}
                         </Text>
                         <Text style={styles.chartFraction}>
                           {sessionPoints.length}{' '}
@@ -879,6 +992,7 @@ export default function Progress() {
                     const barFillPercent = hasVolume
                       ? Math.max(15, Math.min(95, (muscle.volume / maxVol) * 100))
                       : 0;
+                    const recStat = muscleRecoveryStats[muscle.name];
 
                     return (
                       <Pressable
@@ -892,11 +1006,19 @@ export default function Progress() {
                         style={[styles.muscleRow, isSelected && styles.muscleRowSelected]}
                       >
                         <View style={styles.muscleRowTop}>
-                          <Text style={styles.muscleName}>{tm(muscle.name)}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Text style={styles.muscleName}>{tm(muscle.name)}</Text>
+                            {recStat && (
+                              <Text style={styles.muscleWeeklySetsTag}>
+                                {recStat.weeklySets}/{recStat.targetSets}{' '}
+                                {language === 'uk' ? 'сетів (7д)' : 'sets (7d)'}
+                              </Text>
+                            )}
+                          </View>
                           <Text
                             style={[
                               styles.muscleDelta,
-                              { color: hasVolume ? colors.primary : '#6C7A8E' },
+                              { color: hasVolume ? colors.primaryText : '#6C7A8E' },
                             ]}
                           >
                             {hasVolume
@@ -914,7 +1036,7 @@ export default function Progress() {
                               styles.progressBarFill,
                               {
                                 width: `${barFillPercent}%`,
-                                backgroundColor: colors.primary,
+                                backgroundColor: colors.accentLine,
                               },
                             ]}
                           />
@@ -1009,7 +1131,7 @@ export default function Progress() {
                   style={[
                     styles.statNumber,
                     bodyStats.deltaWeight !== 0 && {
-                      color: colors.primary,
+                      color: colors.primaryText,
                     },
                   ]}
                 >
@@ -1092,7 +1214,7 @@ export default function Progress() {
                   <Ionicons
                     name="analytics-outline"
                     size={16}
-                    color={colors.primary}
+                    color={colors.primaryText}
                     style={{ marginRight: 6 }}
                   />
                   <Text style={styles.aiInsightBadgeText}>
@@ -1113,7 +1235,7 @@ export default function Progress() {
                 <Ionicons
                   name="checkmark-circle-outline"
                   size={16}
-                  color={colors.primary}
+                  color={colors.primaryText}
                   style={{ marginRight: 8, marginTop: 1 }}
                 />
                 <Text style={styles.aiRecoText}>{aiAnalysis.recommendation}</Text>
@@ -1223,7 +1345,7 @@ export default function Progress() {
                       <MaterialCommunityIcons
                         name={item.icon}
                         size={20}
-                        color={item.isNewPr ? '#FFD130' : colors.primary}
+                        color={item.isNewPr ? '#D97706' : colors.primaryText}
                       />
                     </View>
 
@@ -1290,6 +1412,8 @@ export default function Progress() {
             )}
           </View>
         )}
+        </Animated.View>
+        )}
       </ScrollView>
 
       <LogWeightModal
@@ -1300,10 +1424,10 @@ export default function Progress() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#0E1114',
+    backgroundColor: colors.background,
   },
   header: {
     flexDirection: 'row',
@@ -1325,15 +1449,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
     paddingVertical: 7,
     borderRadius: 12,
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
   },
   historyHeaderBtnText: {
-    color: '#D8DEE9',
+    color: colors.text,
     fontSize: 12,
     fontWeight: '600',
   },
   title: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 28,
     fontWeight: '700',
     letterSpacing: -0.4,
@@ -1345,10 +1471,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 12,
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
   },
   dropdownBtnText: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1357,29 +1485,31 @@ const styles = StyleSheet.create({
     top: 56,
     right: 24,
     zIndex: 100,
-    backgroundColor: '#181D24',
+    backgroundColor: colors.surface,
     borderRadius: 14,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   dropdownItem: {
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
   dropdownItemActive: {
-    backgroundColor: '#222934',
+    backgroundColor: colors.elevated,
   },
   dropdownItemText: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 13,
     fontWeight: '500',
   },
   dropdownItemTextActive: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
   },
   segmentBar: {
     flexDirection: 'row',
-    backgroundColor: '#14181E',
+    backgroundColor: colors.isDark ? colors.surface : colors.elevated,
     borderRadius: 14,
     marginHorizontal: 24,
     marginTop: 6,
@@ -1394,17 +1524,17 @@ const styles = StyleSheet.create({
     borderRadius: 11,
   },
   segmentBtnActive: {
-    backgroundColor: '#202630',
+    backgroundColor: colors.isDark ? '#202630' : colors.surface,
   },
   segmentBtnText: {
-    color: '#7D8796',
+    color: colors.secondary,
     fontSize: 12.5,
     fontWeight: '600',
     textAlign: 'center',
     includeFontPadding: false,
   },
   segmentBtnTextActive: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontWeight: '700',
   },
   scrollContent: {
@@ -1417,11 +1547,12 @@ const styles = StyleSheet.create({
   statsSummaryStrip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 18,
     paddingVertical: 16,
     paddingHorizontal: 12,
     marginBottom: 14,
+    ...cardElevation(colors),
   },
   statStripCol: {
     flex: 1,
@@ -1431,7 +1562,7 @@ const styles = StyleSheet.create({
   statStripDivider: {
     width: 1,
     height: 28,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: colors.divider,
   },
   statsRow: {
     flexDirection: 'row',
@@ -1440,23 +1571,24 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 18,
     minHeight: 78,
     paddingVertical: 14,
     paddingHorizontal: 12,
     justifyContent: 'center',
     gap: 4,
+    ...cardElevation(colors),
   },
   statNumber: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 21,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
     letterSpacing: -0.3,
   },
   statLabel: {
-    color: '#7D8796',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '500',
   },
@@ -1472,25 +1604,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 12,
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.border,
   },
   exercisePillActive: {
-    backgroundColor: '#222934',
+    backgroundColor: colors.activeChipBg,
+    borderColor: colors.activeChipBg,
   },
   exercisePillText: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 13,
     fontWeight: '600',
   },
   exercisePillTextActive: {
-    color: '#FFFFFF',
+    color: colors.activeChipText,
     fontWeight: '700',
   },
   strengthCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 18,
     marginBottom: 14,
+    ...cardElevation(colors),
   },
   strengthHeader: {
     flexDirection: 'row',
@@ -1499,35 +1635,37 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   strengthKicker: {
-    color: '#7D8796',
+    color: colors.secondary,
     fontSize: 11,
     fontWeight: '600',
     marginBottom: 4,
   },
   strengthExerciseName: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 17,
     fontWeight: '700',
     letterSpacing: -0.2,
   },
   strengthBigWeight: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 26,
     fontWeight: '700',
     letterSpacing: -0.4,
     fontVariant: ['tabular-nums'],
   },
   strengthSubBest: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12.5,
     fontWeight: '500',
     marginTop: 3,
+    fontVariant: ['tabular-nums'],
   },
   strengthEst1RM: {
-    color: '#7D8796',
+    color: colors.secondary,
     fontSize: 11.5,
     fontWeight: '500',
     marginTop: 2,
+    fontVariant: ['tabular-nums'],
   },
   chartWrap: {
     alignItems: 'center',
@@ -1541,12 +1679,12 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   chartTrendPositive: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '500',
   },
   chartFraction: {
-    color: '#6C7685',
+    color: colors.muted,
     fontSize: 12,
     fontWeight: '500',
   },
@@ -1556,14 +1694,14 @@ const styles = StyleSheet.create({
     paddingVertical: 28,
   },
   chartEmptyTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 6,
     textAlign: 'center',
   },
   chartEmptyBody: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12.5,
     textAlign: 'center',
     maxWidth: 240,
@@ -1575,32 +1713,33 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: colors.divider,
   },
   timePill: {
     flex: 1,
     height: 32,
     borderRadius: 10,
-    backgroundColor: '#1A2029',
+    backgroundColor: colors.elevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
   timePillActive: {
-    backgroundColor: '#28313F',
+    backgroundColor: colors.activeChipBg,
   },
   timePillText: {
-    color: '#7D8796',
+    color: colors.secondary,
     fontSize: 11.5,
     fontWeight: '600',
   },
   timePillTextActive: {
-    color: '#FFFFFF',
+    color: colors.activeChipText,
     fontWeight: '700',
   },
   previewSectionCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 18,
+    ...cardElevation(colors),
   },
   previewSectionHeader: {
     flexDirection: 'row',
@@ -1609,7 +1748,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   previewSectionTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 15,
     fontWeight: '700',
   },
@@ -1621,17 +1760,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   muscleMiniName: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 13.5,
   },
   muscleMiniVal: {
-    color: '#E5E9F0',
+    color: colors.text,
     fontSize: 13.5,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
   previewWeightVal: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 15,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
@@ -1643,31 +1782,32 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: colors.divider,
   },
   previewWeightDelta: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12.5,
     fontWeight: '500',
     fontVariant: ['tabular-nums'],
   },
   previewWeightLink: {
-    color: '#A0A8B4',
+    color: colors.secondary,
     fontSize: 12.5,
     fontWeight: '600',
   },
   muscleListCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 18,
     marginBottom: 14,
     gap: 16,
+    ...cardElevation(colors),
   },
   muscleRow: {
     paddingVertical: 4,
   },
   muscleRowSelected: {
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.elevated,
     borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -1678,9 +1818,42 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   muscleName: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 14,
     fontWeight: '600',
+  },
+  muscleWeeklySetsTag: {
+    color: colors.secondary,
+    fontSize: 11,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  metricSwitcherRow: {
+    flexDirection: 'row',
+    gap: 6,
+    backgroundColor: colors.elevated,
+    borderRadius: 10,
+    padding: 3,
+    marginBottom: 8,
+  },
+  metricSwitchPill: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  metricSwitchPillActive: {
+    backgroundColor: colors.surface,
+  },
+  metricSwitchText: {
+    color: colors.secondary,
+    fontSize: 11.5,
+    fontWeight: '600',
+  },
+  metricSwitchTextActive: {
+    color: colors.text,
+    fontWeight: '700',
   },
   muscleDelta: {
     fontSize: 13,
@@ -1690,7 +1863,7 @@ const styles = StyleSheet.create({
   progressBarTrack: {
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: '#1F2631',
+    backgroundColor: colors.elevated,
     overflow: 'hidden',
   },
   progressBarFill: {
@@ -1698,12 +1871,13 @@ const styles = StyleSheet.create({
     borderRadius: 2.5,
   },
   muscleSummaryCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 18,
+    ...cardElevation(colors),
   },
   summaryMuscleTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 16,
     fontWeight: '700',
     marginBottom: 12,
@@ -1720,31 +1894,33 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   summaryMainVal: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 15,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
   summarySubVal: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '500',
+    fontVariant: ['tabular-nums'],
   },
   prsList: {
     gap: 8,
   },
   prCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
+    ...cardElevation(colors),
   },
   prCardIconWrap: {
     width: 36,
     height: 36,
     borderRadius: 10,
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.elevated,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -1754,26 +1930,26 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   prCardName: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 15,
     fontWeight: '600',
     marginBottom: 2,
     flexShrink: 1,
   },
   prBadge: {
-    backgroundColor: 'rgba(255, 209, 48, 0.15)',
+    backgroundColor: 'rgba(245, 158, 11, 0.16)',
     borderRadius: 5,
     paddingHorizontal: 5,
     paddingVertical: 1,
   },
   prBadgeText: {
-    color: '#FFD130',
+    color: colors.warning,
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 0.4,
   },
   prCardDate: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12,
     fontWeight: '400',
   },
@@ -1783,7 +1959,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   prCardWeight: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 14,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
@@ -1797,15 +1973,16 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   logWeightHeaderBtnText: {
-    color: '#0B0D0F',
+    color: colors.onPrimary,
     fontSize: 12,
     fontWeight: '700',
   },
   aiInsightCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 18,
     marginBottom: 16,
+    ...cardElevation(colors),
   },
   aiInsightHeader: {
     flexDirection: 'row',
@@ -1818,7 +1995,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   aiInsightBadgeText: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 11.5,
     fontWeight: '600',
   },
@@ -1826,33 +2003,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.elevated,
   },
   aiStatusPillText: {
     fontSize: 10.5,
     fontWeight: '600',
   },
   aiInsightTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 16,
     fontWeight: '700',
     marginBottom: 6,
   },
   aiInsightBody: {
-    color: '#94A3B8',
+    color: colors.secondary,
     fontSize: 13,
     lineHeight: 19,
     marginBottom: 12,
   },
   aiRecoBox: {
     flexDirection: 'row',
-    backgroundColor: '#1A2029',
+    backgroundColor: colors.elevated,
     borderRadius: 12,
     padding: 12,
   },
   aiRecoText: {
     flex: 1,
-    color: '#D8DEE9',
+    color: colors.text,
     fontSize: 12.5,
     lineHeight: 18,
     fontWeight: '400',
@@ -1868,14 +2045,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   addWeightLink: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   weighInListCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 18,
     overflow: 'hidden',
+    ...cardElevation(colors),
   },
   weighInRow: {
     flexDirection: 'row',
@@ -1884,7 +2062,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    borderBottomColor: colors.divider,
   },
   weighInRowLast: {
     borderBottomWidth: 0,
@@ -1895,12 +2073,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   weighInDateText: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 14,
     fontWeight: '600',
+    fontVariant: ['tabular-nums'],
   },
   weighInNote: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 12,
     marginTop: 1,
   },
@@ -1910,7 +2089,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   weighInValue: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 15,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
@@ -1919,17 +2098,18 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   emptyCard: {
-    backgroundColor: '#14181E',
+    backgroundColor: colors.surface,
     borderRadius: 22,
     padding: 26,
     alignItems: 'center',
     marginVertical: 12,
+    ...cardElevation(colors),
   },
   emptyGlowRing: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: '#1C222B',
+    backgroundColor: colors.elevated,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
@@ -1939,7 +2119,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emptyTitle: {
-    color: '#FFFFFF',
+    color: colors.text,
     fontSize: 18,
     fontWeight: '700',
     letterSpacing: -0.2,
@@ -1947,7 +2127,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   emptySubtitle: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 14,
     textAlign: 'center',
     lineHeight: 20,
@@ -1968,7 +2148,7 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   emptyCtaBtnText: {
-    color: '#0B0D0F',
+    color: colors.onPrimary,
     fontSize: 15,
     fontWeight: '700',
   },
@@ -1977,7 +2157,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingTop: 20,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    borderTopColor: colors.divider,
     gap: 10,
   },
   emptyFeatureRow: {
@@ -1992,7 +2172,7 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   emptyFeatureText: {
-    color: '#8E959F',
+    color: colors.secondary,
     fontSize: 13,
     fontWeight: '400',
   },

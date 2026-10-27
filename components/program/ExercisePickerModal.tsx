@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Card } from '@/components/ui/Card';
-import { colors } from '@/constants/colors';
+import { useThemeColors, type ThemeColors } from '@/constants/colors';
 import { spacing } from '@/constants/spacing';
 import { getExerciseImage } from '@/lib/exerciseImages';
 import { EXERCISE_LIBRARY, type LibraryExercise } from '@/lib/exerciseLibrary';
@@ -36,6 +36,8 @@ export function ExercisePickerModal({
   onClose,
   onSelect,
 }: ExercisePickerModalProps) {
+  const colors = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { tm, te, language } = useI18n();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleGroupFilter>('All');
@@ -209,61 +211,92 @@ export function ExercisePickerModal({
                       : 'Gym machine or movement with custom photo'}
                   </Text>
                 </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+                <Ionicons name="chevron-forward" size={18} color={colors.primaryText} />
               </Pressable>
             }
-            renderItem={({ item }) => (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => handleSelect(item)}
-                style={({ pressed }) => [styles.itemPressable, pressed && styles.pressed]}
-              >
-                <Card style={styles.exerciseCard}>
-                  <View style={styles.exerciseCardLeft}>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Деталі вправи"
-                      hitSlop={6}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        hapticLight();
-                        setDetailExercise(item);
-                      }}
-                      style={styles.exerciseThumbWrap}
+            renderItem={({ item }) => {
+              const isCurrent = Boolean(
+                activeExerciseName &&
+                  item.name.trim().toLowerCase() === activeExerciseName.trim().toLowerCase()
+              );
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => handleSelect(item)}
+                  style={({ pressed }) => [styles.itemPressable, pressed && styles.pressed]}
+                >
+                  <Card
+                    style={[
+                      styles.exerciseCard,
+                      isCurrent && { borderColor: colors.accentLine, backgroundColor: colors.primaryMuted },
+                    ]}
+                  >
+                    <View style={styles.exerciseCardLeft}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Деталі вправи"
+                        hitSlop={6}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          hapticLight();
+                          setDetailExercise(item);
+                        }}
+                        style={styles.exerciseThumbWrap}
+                      >
+                        <Image
+                          source={getExerciseImage(item.name, item.customImageUri)}
+                          style={styles.exerciseThumb}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.thumbInfoBadge}>
+                          <Ionicons name="information" size={9} color="#0B0D0F" />
+                        </View>
+                      </Pressable>
+                      <View style={styles.cardInfo}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text numberOfLines={1} style={styles.exerciseName}>{te(item.name)}</Text>
+                          {item.isCustom && (
+                            <View style={styles.customBadge}>
+                              <Text style={styles.customBadgeText}>
+                                {language === 'uk' ? 'ВЛАСНА' : 'CUSTOM'}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={styles.exerciseMeta}>
+                          {tm(item.muscleGroup)} • {item.equipment}
+                        </Text>
+                      </View>
+                    </View>
+                    <View
+                      style={[
+                        styles.addButtonBadge,
+                        isCurrent && { backgroundColor: colors.primary, borderColor: colors.primary },
+                      ]}
                     >
-                      <Image
-                        source={getExerciseImage(item.name, item.customImageUri)}
-                        style={styles.exerciseThumb}
-                        resizeMode="cover"
-                      />
-                      <View style={styles.thumbInfoBadge}>
-                        <Ionicons name="information" size={9} color="#0B0D0F" />
-                      </View>
-                    </Pressable>
-                    <View style={styles.cardInfo}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text numberOfLines={1} style={styles.exerciseName}>{te(item.name)}</Text>
-                        {item.isCustom && (
-                          <View style={styles.customBadge}>
-                            <Text style={styles.customBadgeText}>
-                              {language === 'uk' ? 'ВЛАСНА' : 'CUSTOM'}
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                      <Text style={styles.exerciseMeta}>
-                        {tm(item.muscleGroup)} • {item.equipment}
+                      <Text
+                        style={[
+                          styles.addButtonText,
+                          isCurrent && { color: colors.onPrimary },
+                        ]}
+                      >
+                        {isCurrent
+                          ? language === 'uk'
+                            ? 'АКТИВНА'
+                            : 'ACTIVE'
+                          : mode === 'swap'
+                            ? language === 'uk'
+                              ? 'ЗАМІНИТИ'
+                              : 'SWAP'
+                            : language === 'uk'
+                              ? '+ ДОДАТИ'
+                              : '+ ADD'}
                       </Text>
                     </View>
-                  </View>
-                  <View style={styles.addButtonBadge}>
-                    <Text style={styles.addButtonText}>
-                      {language === 'uk' ? '+ ДОДАТИ' : '+ ADD'}
-                    </Text>
-                  </View>
-                </Card>
-              </Pressable>
-            )}
+                  </Card>
+                </Pressable>
+              );
+            }}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyTitle}>
@@ -305,7 +338,7 @@ export function ExercisePickerModal({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.background,
@@ -322,7 +355,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   eyebrow: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 1.2,
@@ -378,8 +411,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   filterPillSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    backgroundColor: colors.activeChipBg,
+    borderColor: colors.activeChipBg,
   },
   filterText: {
     color: colors.muted,
@@ -387,7 +420,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   filterTextSelected: {
-    color: colors.background,
+    color: colors.activeChipText,
   },
   listContent: {
     paddingHorizontal: spacing.xl,
@@ -449,15 +482,15 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
   },
   addButtonBadge: {
-    backgroundColor: 'rgba(200, 255, 61, 0.12)',
+    backgroundColor: colors.primaryMuted,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: colors.primary,
+    borderColor: colors.accentLine,
   },
   addButtonText: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.5,
@@ -486,9 +519,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#161B24',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: 'rgba(200, 255, 61, 0.3)',
+    borderColor: colors.accentLine,
     borderRadius: 16,
     padding: 14,
     marginBottom: 14,
@@ -504,25 +537,25 @@ const styles = StyleSheet.create({
   createExTitle: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#FFFFFF',
+    color: colors.text,
     letterSpacing: -0.2,
   },
   createExSubtitle: {
     fontSize: 12,
-    color: '#8E959F',
+    color: colors.secondary,
     marginTop: 2,
     fontWeight: '500',
   },
   customBadge: {
-    backgroundColor: 'rgba(200, 255, 61, 0.15)',
+    backgroundColor: colors.primaryMuted,
     borderWidth: 1,
-    borderColor: colors.primary,
+    borderColor: colors.accentLine,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
   },
   customBadgeText: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.5,
